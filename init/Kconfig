@@ -931,6 +931,14 @@ config NUMA_BALANCING_DEFAULT_ENABLED
 	  If set, automatic NUMA balancing will be enabled if running on a NUMA
 	  machine.
 
+config NVSL_VNUMA
+	bool "NVSL virtual NUMA support"
+	default n
+
+config NVSL_DEBUG
+	bool "NVSL debug mode"
+	default n
+
 menuconfig CGROUPS
 	bool "Control Group support"
 	select KERNFS

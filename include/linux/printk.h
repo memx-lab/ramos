@@ -456,6 +456,17 @@ struct pi_entry {
 #define printk_deferred(fmt, ...)					\
 	printk_index_wrap(_printk_deferred, fmt, ##__VA_ARGS__)
 
+#define printk_nvsl_info(fmt, ...) \
+	printk(KERN_INFO "[NVSL] " pr_fmt(fmt), ##__VA_ARGS__)
+
+#ifdef CONFIG_NVSL_DEBUG
+#define printk_nvsl_debug(fmt, ...) \
+	printk(KERN_DEBUG "[NVSL] " pr_fmt(fmt), ##__VA_ARGS__)
+#else
+#define printk_nvsl_debug(fmt, ...) \
+	no_printk(KERN_DEBUG "[NVSL] " pr_fmt(fmt), ##__VA_ARGS__)
+#endif
+
 /**
  * pr_emerg - Print an emergency-level message
  * @fmt: format string
