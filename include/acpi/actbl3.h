@@ -217,6 +217,18 @@ struct acpi_srat_cpu_affinity {
 
 /* 1: Memory Affinity */
 
+#ifdef CONFIG_NVSL_VNUMA
+struct acpi_srat_mem_affinity {
+	struct acpi_subtable_header header;
+	u32 proximity_domain;
+	u16 tier_id;
+	u64 base_address;
+	u64 length;
+	u32 dax_id;
+	u32 flags;
+	u64 seg_id;
+};
+#else
 struct acpi_srat_mem_affinity {
 	struct acpi_subtable_header header;
 	u32 proximity_domain;
@@ -227,6 +239,7 @@ struct acpi_srat_mem_affinity {
 	u32 flags;
 	u64 reserved2;		/* Reserved, must be zero */
 };
+#endif
 
 /* Flags */
 

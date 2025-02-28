@@ -7977,9 +7977,16 @@ static void __init free_area_init_node(int nid)
 	pgdat->per_cpu_nodestats = NULL;
 
 	if (start_pfn != end_pfn) {
+#ifdef CONFIG_NVSL_VNUMA
+		pr_info("Initmem setup node %d tier %u dax %u segment %llu [mem %#018Lx-%#018Lx]\n",
+			nid, pgdat->tier_id, pgdat->dax_id, pgdat->seg_id,
+			(u64)start_pfn << PAGE_SHIFT,
+			end_pfn ? ((u64)end_pfn << PAGE_SHIFT) - 1 : 0);
+#else
 		pr_info("Initmem setup node %d [mem %#018Lx-%#018Lx]\n", nid,
 			(u64)start_pfn << PAGE_SHIFT,
 			end_pfn ? ((u64)end_pfn << PAGE_SHIFT) - 1 : 0);
+#endif
 	} else {
 		pr_info("Initmem setup node %d as memoryless\n", nid);
 	}

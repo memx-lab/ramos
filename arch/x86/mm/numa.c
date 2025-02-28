@@ -148,6 +148,39 @@ static int __init numa_add_memblk_to(int nid, u64 start, u64 end,
 	return 0;
 }
 
+#ifdef CONFIG_NVSL_VNUMA
+static int __init numa_add_memblk_to_elas_mm(int nid, u16 tier_id, u32 dax_id, u64 seg_id,
+					u64 start, u64 end, struct numa_meminfo *mi)
+{
+	/* ignore zero length blks */
+	if (start == end)
+		return 0;
+
+	/* whine about and ignore invalid blks */
+	if (start > end || nid < 0 || nid >= MAX_NUMNODES) {
+		pr_warn("Warning: invalid memblk node %d [mem %#010Lx-%#010Lx]\n",
+			nid, start, end - 1);
+		return 0;
+	}
+
+	if (mi->nr_blks >= NR_NODE_MEMBLKS) {
+		pr_err("too many memblk ranges\n");
+		return -EINVAL;
+	}
+
+	mi->blk[mi->nr_blks].start = start;
+	mi->blk[mi->nr_blks].end = end;
+	mi->blk[mi->nr_blks].nid = nid;
+#ifdef CONFIG_NVSL_VNUMA
+	mi->blk[mi->nr_blks].tier_id = tier_id;
+	mi->blk[mi->nr_blks].dax_id = dax_id;
+	mi->blk[mi->nr_blks].seg_id = seg_id;
+#endif
+	mi->nr_blks++;
+	return 0;
+}
+#endif
+
 /**
  * numa_remove_memblk_from - Remove one numa_memblk from a numa_meminfo
  * @idx: Index of memblk to remove
@@ -192,13 +225,22 @@ int __init numa_add_memblk(int nid, u64 start, u64 end)
 	return numa_add_memblk_to(nid, start, end, &numa_meminfo);
 }
 
+int __init numa_add_memblk_elas_mm(int nid, u16 tier_id, u32 dax_id, u64 seg_id,
+						u64 start, u64 end)
+{
+	return numa_add_memblk_to_elas_mm(nid, tier_id, dax_id, seg_id, start, end, &numa_meminfo);
+}
+
 /* Allocate NODE_DATA for a node on the local memory */
-static void __init alloc_node_data(int nid)
+static void __init alloc_node_data(int nid, u16 tier_id, u32 dax_id, u64 seg_id)
 {
 	const size_t nd_size = roundup(sizeof(pg_data_t), PAGE_SIZE);
 	u64 nd_pa;
 	void *nd;
 	int tnid;
+#ifdef CONFIG_NVSL_VNUMA
+	pg_data_t *pgdat;
+#endif
 
 	/*
 	 * Allocate node data.  Try node-local memory and then any node.
@@ -221,7 +263,12 @@ static void __init alloc_node_data(int nid)
 
 	node_data[nid] = nd;
 	memset(NODE_DATA(nid), 0, sizeof(pg_data_t));
-
+#ifdef CONFIG_NVSL_VNUMA
+	pgdat = NODE_DATA(nid);
+	pgdat->tier_id = tier_id;
+	pgdat->dax_id = dax_id;
+	pgdat->seg_id = seg_id;
+#endif
 	node_set_online(nid);
 }
 
@@ -547,6 +594,9 @@ static void __init numa_clear_kernel_node_hotplug(void)
 static int __init numa_register_memblks(struct numa_meminfo *mi)
 {
 	int i, nid;
+#ifdef CONFIG_NVSL_VNUMA
+	u16 tier_id; u32 dax_id; u64 seg_id;
+#endif
 
 	/* Account for nodes with cpus and no memory */
 	node_possible_map = numa_nodes_parsed;
@@ -596,6 +646,16 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 				continue;
 			start = min(mi->blk[i].start, start);
 			end = max(mi->blk[i].end, end);
+#ifdef CONFIG_NVSL_VNUMA
+			/*
+			 * For different memory block on same node, they should
+			 * have same tier, dax, and segment id. So we just overwrite
+			 * them again.
+			 */
+			tier_id = mi->blk[i].tier_id;
+			dax_id = mi->blk[i].dax_id;
+			seg_id = mi->blk[i].seg_id;
+#endif
 		}
 
 		if (start >= end)
@@ -607,8 +667,11 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 		 */
 		if (end && (end - start) < NODE_MIN_SIZE)
 			continue;
-
-		alloc_node_data(nid);
+#ifdef CONFIG_NVSL_VNUMA
+		alloc_node_data(nid, tier_id, dax_id, seg_id);
+#else
+		alloc_node_data(nid, 0, 0, 0);
+#endif
 	}
 
 	/* Dump memblock with node info and return. */

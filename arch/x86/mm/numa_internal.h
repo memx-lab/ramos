@@ -9,6 +9,9 @@ struct numa_memblk {
 	u64			start;
 	u64			end;
 	int			nid;
+	u16			tier_id;
+	u32			dax_id;
+	u64			seg_id;
 };
 
 struct numa_meminfo {

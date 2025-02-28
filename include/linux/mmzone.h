@@ -1382,6 +1382,11 @@ typedef struct pglist_data {
 #ifdef CONFIG_NUMA
 	struct memory_tier __rcu *memtier;
 #endif
+#ifdef CONFIG_NVSL_VNUMA
+	u16 tier_id;
+	u32 dax_id;
+	u64 seg_id;
+#endif
 #ifdef CONFIG_MEMORY_FAILURE
 	struct memory_failure_stats mf_stats;
 #endif

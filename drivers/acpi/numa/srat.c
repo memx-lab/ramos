@@ -241,6 +241,9 @@ void __init acpi_numa_slit_init(struct acpi_table_slit *slit)
 int __init
 acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 {
+#ifdef CONFIG_NVSL_VNUMA
+	u16 tier_id; u32 dax_id; u64 seg_id; /* Extended for elastic memory */
+#endif
 	u64 start, end;
 	u32 hotpluggable;
 	int node, pxm;
@@ -260,6 +263,11 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 	start = ma->base_address;
 	end = start + ma->length;
 	pxm = ma->proximity_domain;
+#ifdef CONFIG_NVSL_VNUMA
+	tier_id = ma->tier_id;
+	dax_id = ma->dax_id;
+	seg_id = ma->seg_id;
+#endif
 	if (acpi_srat_revision <= 1)
 		pxm &= 0xff;
 
@@ -268,22 +276,36 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 		pr_err("SRAT: Too many proximity domains.\n");
 		goto out_err_bad_srat;
 	}
-
-	if (numa_add_memblk(node, start, end) < 0) {
+#ifdef CONFIG_NVSL_VNUMA
+	if (numa_add_memblk_elas_mm(node, tier_id, dax_id, seg_id, start, end) < 0) {
 		pr_err("SRAT: Failed to add memblk to node %u [mem %#010Lx-%#010Lx]\n",
 		       node, (unsigned long long) start,
 		       (unsigned long long) end - 1);
 		goto out_err_bad_srat;
 	}
+#else
+	if (numa_add_memblk(node, start, end) < 0) {
+		pr_err("SRAT: Failed to add memblk to node %u [mem %#010Lx-%#010Lx]\n",
+		       node, (unsigned long long) start,
+		       (unsigned long long) end - 1);
+		goto out_err_bad_srat;
+#endif
 
 	node_set(node, numa_nodes_parsed);
 
+#ifdef CONFIG_NVSL_VNUMA
+	pr_info("SRAT: Node %u PXM %u Tier %u Dax %u Segment %llu [mem %#010Lx-%#010Lx]%s%s\n",
+		node, pxm, (unsigned int)tier_id, dax_id, seg_id,
+		(unsigned long long) start, (unsigned long long) end - 1,
+		hotpluggable ? " hotplug" : "",
+		ma->flags & ACPI_SRAT_MEM_NON_VOLATILE ? " non-volatile" : "");
+#else
 	pr_info("SRAT: Node %u PXM %u [mem %#010Lx-%#010Lx]%s%s\n",
 		node, pxm,
 		(unsigned long long) start, (unsigned long long) end - 1,
 		hotpluggable ? " hotplug" : "",
 		ma->flags & ACPI_SRAT_MEM_NON_VOLATILE ? " non-volatile" : "");
-
+#endif
 	/* Mark hotplug range in memblock. */
 	if (hotpluggable && memblock_mark_hotplug(start, ma->length))
 		pr_warn("SRAT: Failed to mark hotplug range [mem %#010Lx-%#010Lx] in memblock\n",
