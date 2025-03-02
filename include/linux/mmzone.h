@@ -1383,6 +1383,7 @@ typedef struct pglist_data {
 	struct memory_tier __rcu *memtier;
 #endif
 #ifdef CONFIG_NVSL_VNUMA
+	/* Physical information */
 	u16 tier_id;
 	u32 dax_id;
 	u64 seg_id;
@@ -1391,6 +1392,33 @@ typedef struct pglist_data {
 	struct memory_failure_stats mf_stats;
 #endif
 } pg_data_t;
+
+
+#ifdef CONFIG_NVSL_VNUMA
+/*
+ * The maximum number of vNUMA group should be larger than
+ * number of parallel units (PUs). 24 is larger than PUs of
+ * current memory pool. We should make it configurable in
+ * the future.
+ */
+#define MAX_NUM_VNUMA_GROUP 24
+struct vnuma_node_group_data {
+	/* For NUMA nodes from same dax device, we construct a vNUMA group. */
+	u32 dax_id;
+	int nr_nodes;
+	int node_ids[MAX_NUMNODES];
+};
+
+struct vnuma_node_data {
+	/*
+	 * The index of vNUMA node is same as tier ID, so we do not record tier id here.
+	 * However, the index of vNUMA group and dax ID might be different, we therefore
+	 * record dax ID of each vNUMA group above.
+	 */
+	int nr_groups;
+	struct vnuma_node_group_data group_data[MAX_NUM_VNUMA_GROUP];
+};
+#endif /* CONFIG_NVSL_VNUMA */
 
 #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)
 #define node_spanned_pages(nid)	(NODE_DATA(nid)->node_spanned_pages)

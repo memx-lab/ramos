@@ -25,6 +25,17 @@ nodemask_t numa_nodes_parsed __initdata;
 struct pglist_data *node_data[MAX_NUMNODES] __read_mostly;
 EXPORT_SYMBOL(node_data);
 
+#ifdef CONFIG_NVSL_VNUMA
+/*
+ * The maximum number of vNUMA nodes should be larger than the
+ * number of memory tiers. Currently we only consider two tiers,
+ * i.e., local (CPU-attached DRAM) and remote (shared CXL pool).
+ * We should make it configurable in the future.
+ */
+#define MAX_NUM_VNUMA_NODE 2
+struct vnuma_node_data vnuma_nodes[MAX_NUM_VNUMA_NODE] __read_mostly;
+#endif /* CONFIG_NVSL_VNUMA */
+
 static struct numa_meminfo numa_meminfo __initdata_or_meminfo;
 static struct numa_meminfo numa_reserved_meminfo __initdata_or_meminfo;
 
@@ -679,6 +690,94 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 	return 0;
 }
 
+#ifdef CONFIG_NVSL_VNUMA
+static int __init numa_add_to_vnode_group(struct vnuma_node_group_data *vnode_group_data, int nodeid)
+{
+	if (vnode_group_data->nr_nodes >= MAX_NUMNODES) {
+		printk_nvsl_error("too many nodes in vnode group\n");
+		return -EINVAL;
+	}
+	/* TODO: check duplicated nodes in groups */
+	vnode_group_data->node_ids[vnode_group_data->nr_nodes] = nodeid;
+	vnode_group_data->nr_nodes++;
+	return 0;
+}
+
+static int __init numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
+{
+	int i, vnode_id;
+	struct vnuma_node_data *vnode_data;
+	struct vnuma_node_group_data *vnode_group_data;
+
+	vnode_id = tier_id;
+	vnode_data = &vnuma_nodes[vnode_id];
+
+	/* Check existing groups and find one indicating to same dax ID */
+	for (i = 0; i < vnode_data->nr_groups; i++) {
+		vnode_group_data = &vnode_data->group_data[i];
+		if (vnode_group_data->dax_id == dax_id) {
+			/* Try to add the NUMA node to existing group */
+			return numa_add_to_vnode_group(vnode_group_data, nodeid);
+		}
+	}
+
+	/* Try to build a new group if cannot find an existing group */
+	if (vnode_data->nr_groups >= MAX_NUM_VNUMA_GROUP) {
+		printk_nvsl_error("too many groups in vnode %u\n", vnode_id);
+		return -EINVAL;
+	}
+	vnode_data->group_data[vnode_data->nr_groups].dax_id = dax_id;
+	vnode_group_data = &vnode_data->group_data[vnode_data->nr_groups];
+	vnode_data->nr_groups++;
+	return numa_add_to_vnode_group(vnode_group_data, nodeid);
+}
+
+static int __init numa_construct_vnodes(void)
+{
+	int ret, nodeid;
+	u16 tier_id; u32 dax_id; u64 seg_id;
+	pg_data_t *pgdat;
+
+	for_each_online_node(nodeid) {
+		pgdat = NODE_DATA(nodeid);
+		tier_id = pgdat->tier_id;
+		dax_id = pgdat->dax_id;
+		seg_id = pgdat->seg_id;
+
+		ret = numa_add_to_vnode(nodeid, tier_id, dax_id);
+		if (ret < 0) {
+			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u Segment %llu)\n", nodeid, tier_id, dax_id, seg_id);
+			return ret;
+		}
+	}
+	return 0;
+}
+
+static void __init numa_dump_vnodes(void)
+{
+	int vnode_idx, group_idx, node_idx;
+	struct vnuma_node_data *vnode_data;
+	struct vnuma_node_group_data *vnode_group_data;
+
+	printk_nvsl_info("Dump vNUMA nodes:\n");
+	printk_nvsl_info("  Total vNUMA nodes: %u\n", MAX_NUM_VNUMA_NODE);
+
+	for (vnode_idx = 0; vnode_idx < MAX_NUM_VNUMA_NODE; vnode_idx++) {
+		vnode_data = &vnuma_nodes[vnode_idx];
+		printk_nvsl_info("    vNUMA node %u:\n", vnode_idx);
+		for (group_idx = 0; group_idx < vnode_data->nr_groups; group_idx++) {
+			vnode_group_data = &vnode_data->group_data[group_idx];
+			printk_nvsl_info("      Group %u:\n", group_idx);
+			for (node_idx = 0; node_idx < vnode_group_data->nr_nodes; node_idx++) {
+				printk_nvsl_info("        Node %u\n", vnode_group_data->node_ids[node_idx]);
+			}
+			printk_nvsl_info("\n");
+		}
+	}
+}
+
+#endif /* CONFIG_NVSL_VNUMA */
+
 /*
  * There are unfortunately some poorly designed mainboards around that
  * only connect memory to a single CPU. This breaks the 1:1 cpu->node
@@ -742,6 +841,15 @@ static int __init numa_init(int (*init_func)(void))
 	ret = numa_register_memblks(&numa_meminfo);
 	if (ret < 0)
 		return ret;
+
+#ifdef CONFIG_NVSL_VNUMA
+	ret = numa_construct_vnodes();
+	if (ret < 0)
+		return ret;
+#ifdef CONFIG_NVSL_DEBUG
+	numa_dump_vnodes();
+#endif
+#endif
 
 	for (i = 0; i < nr_cpu_ids; i++) {
 		int nid = early_cpu_to_node(i);
