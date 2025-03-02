@@ -459,6 +459,9 @@ struct pi_entry {
 #define printk_nvsl_info(fmt, ...) \
 	printk(KERN_INFO "[NVSL] " pr_fmt(fmt), ##__VA_ARGS__)
 
+#define printk_nvsl_error(fmt, ...) \
+	printk(KERN_ERR "[NVSL] " pr_fmt(fmt), ##__VA_ARGS__)
+
 #ifdef CONFIG_NVSL_DEBUG
 #define printk_nvsl_debug(fmt, ...) \
 	printk(KERN_DEBUG "[NVSL] " pr_fmt(fmt), ##__VA_ARGS__)
