@@ -13,6 +13,23 @@
 
 #define	NUMA_NO_NODE	(-1)
 
+#ifdef CONFIG_NVSL_VNUMA
+/*
+ * The maximum number of vNUMA nodes should be larger than the
+ * number of memory tiers. Currently we only consider two tiers,
+ * i.e., local (CPU-attached DRAM) and remote (shared CXL pool).
+ * We should make it configurable in the future.
+ */
+#define MAX_NUM_VNUMA_NODE 2
+/*
+ * The maximum number of vNUMA group should be larger than
+ * number of parallel units (PUs). 24 is larger than PUs of
+ * current memory pool. We should make it configurable in
+ * the future.
+ */
+#define MAX_NUM_VNUMA_GROUP 24
+#endif /* CONFIG_NVSL_VNUMA */
+
 /* optionally keep NUMA memory info available post init */
 #ifdef CONFIG_NUMA_KEEP_MEMINFO
 #define __initdata_or_meminfo

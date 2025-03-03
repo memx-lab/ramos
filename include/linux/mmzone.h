@@ -1395,13 +1395,6 @@ typedef struct pglist_data {
 
 
 #ifdef CONFIG_NVSL_VNUMA
-/*
- * The maximum number of vNUMA group should be larger than
- * number of parallel units (PUs). 24 is larger than PUs of
- * current memory pool. We should make it configurable in
- * the future.
- */
-#define MAX_NUM_VNUMA_GROUP 24
 struct vnuma_node_group_data {
 	/* For NUMA nodes from same dax device, we construct a vNUMA group. */
 	u32 dax_id;

@@ -26,14 +26,8 @@ struct pglist_data *node_data[MAX_NUMNODES] __read_mostly;
 EXPORT_SYMBOL(node_data);
 
 #ifdef CONFIG_NVSL_VNUMA
-/*
- * The maximum number of vNUMA nodes should be larger than the
- * number of memory tiers. Currently we only consider two tiers,
- * i.e., local (CPU-attached DRAM) and remote (shared CXL pool).
- * We should make it configurable in the future.
- */
-#define MAX_NUM_VNUMA_NODE 2
 struct vnuma_node_data vnuma_nodes[MAX_NUM_VNUMA_NODE] __read_mostly;
+EXPORT_SYMBOL(vnuma_nodes);
 #endif /* CONFIG_NVSL_VNUMA */
 
 static struct numa_meminfo numa_meminfo __initdata_or_meminfo;

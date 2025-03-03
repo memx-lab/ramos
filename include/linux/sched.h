@@ -1249,7 +1249,11 @@ struct task_struct {
 	struct mempolicy		*mempolicy;
 	short				il_prev;
 	short				pref_node_fork;
-#endif
+#ifdef CONFIG_NVSL_VNUMA
+	u32					vnode_il_prev_gid[MAX_NUM_VNUMA_NODE];
+	u64					vnode_il_prev_nidx[MAX_NUM_VNUMA_NODE][MAX_NUM_VNUMA_GROUP];
+#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_NUMA */
 #ifdef CONFIG_NUMA_BALANCING
 	int				numa_scan_seq;
 	unsigned int			numa_scan_period;
