@@ -28,6 +28,13 @@ EXPORT_SYMBOL(node_data);
 #ifdef CONFIG_NVSL_VNUMA
 struct vnuma_node_data vnuma_nodes[MAX_NUM_VNUMA_NODE] __read_mostly;
 EXPORT_SYMBOL(vnuma_nodes);
+
+/*
+ * We use this to record NUMA node physical information.
+ * When hotplug new memory and thus new numa node, we use this information
+ * to construct new virtual node.
+ */
+struct numa_phys_info numa_phys_info[MAX_NUMNODES] __read_mostly;
 #endif /* CONFIG_NVSL_VNUMA */
 
 static struct numa_meminfo numa_meminfo __initdata_or_meminfo;
@@ -230,11 +237,45 @@ int __init numa_add_memblk(int nid, u64 start, u64 end)
 	return numa_add_memblk_to(nid, start, end, &numa_meminfo);
 }
 
+#ifdef CONFIG_NVSL_VNUMA
+void numa_record_physical_info(int nid, u16 tier_id, u32 dax_id)
+{
+	if (nid >= MAX_NUMNODES) {
+		printk_nvsl_error("Cannot record physical information of numa node %d, max %d\n",
+			nid, MAX_NUMNODES);
+		return;
+	}
+	numa_phys_info[nid].tier_id = tier_id;
+	numa_phys_info[nid].dax_id = dax_id;
+	numa_phys_info[nid].initialized = true;
+}
+
+u16 numa_node_get_tier_id(int nid)
+{
+	// TODO: need a new method to handle invalid node id
+	if (nid >= MAX_NUMNODES || !numa_phys_info[nid].initialized) {
+		return 0;
+	}
+
+	return numa_phys_info[nid].tier_id;
+}
+
+u32 numa_node_get_dax_id(int nid)
+{
+	// TODO: need a new method to handle invalid node id
+	if (nid >= MAX_NUMNODES || !numa_phys_info[nid].initialized) {
+		return 0;
+	}
+
+	return numa_phys_info[nid].dax_id;
+}
+
 int __init numa_add_memblk_elas_mm(int nid, u16 tier_id, u32 dax_id, u64 seg_id,
 						u64 start, u64 end)
 {
 	return numa_add_memblk_to_elas_mm(nid, tier_id, dax_id, seg_id, start, end, &numa_meminfo);
 }
+#endif /* CONFIG_NVSL_VNUMA */
 
 /* Allocate NODE_DATA for a node on the local memory */
 static void __init alloc_node_data(int nid, u16 tier_id, u32 dax_id, u64 seg_id)
@@ -613,6 +654,7 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 		struct numa_memblk *mb = &mi->blk[i];
 		memblock_set_node(mb->start, mb->end - mb->start,
 				  &memblock.memory, mb->nid);
+		printk_nvsl_info("Node %d, start %llu, end: %llu\n", mb->nid , mb->start, mb->end);
 	}
 
 	/*
@@ -697,7 +739,7 @@ static int __init numa_add_to_vnode_group(struct vnuma_node_group_data *vnode_gr
 	return 0;
 }
 
-static int __init numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
+int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
 {
 	int i, vnode_id;
 	struct vnuma_node_data *vnode_data;
@@ -740,14 +782,14 @@ static int __init numa_construct_vnodes(void)
 
 		ret = numa_add_to_vnode(nodeid, tier_id, dax_id);
 		if (ret < 0) {
-			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u Segment %llu)\n", nodeid, tier_id, dax_id, seg_id);
+			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n", nodeid, tier_id, dax_id);
 			return ret;
 		}
 	}
 	return 0;
 }
 
-static void __init numa_dump_vnodes(void)
+void numa_dump_vnodes(void)
 {
 	int vnode_idx, group_idx, node_idx;
 	struct vnuma_node_data *vnode_data;

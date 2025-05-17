@@ -33,10 +33,17 @@ extern s16 __apicid_to_node[MAX_LOCAL_APIC];
 extern nodemask_t numa_nodes_parsed __initdata;
 
 extern int __init numa_add_memblk(int nodeid, u64 start, u64 end);
+
 #ifdef CONFIG_NVSL_VNUMA
+extern void numa_record_physical_info(int nid, u16 tier_id, u32 dax_id);
+extern u16 numa_node_get_tier_id(int nid);
+extern u32 numa_node_get_dax_id(int nid);
 extern int __init numa_add_memblk_elas_mm(int nid, u16 tier_id, u32 dax_id, u64 seg_id,
 						u64 start, u64 end);
-#endif
+extern int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id);
+extern void numa_dump_vnodes(void);
+#endif /* CONFIG_NVSL_VNUMA */
+
 extern void __init numa_set_distance(int from, int to, int distance);
 
 static inline void set_apicid_to_node(int apicid, s16 node)

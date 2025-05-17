@@ -277,6 +277,7 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 		goto out_err_bad_srat;
 	}
 #ifdef CONFIG_NVSL_VNUMA
+	numa_record_physical_info(node, tier_id, dax_id);
 	if (numa_add_memblk_elas_mm(node, tier_id, dax_id, seg_id, start, end) < 0) {
 		pr_err("SRAT: Failed to add memblk to node %u [mem %#010Lx-%#010Lx]\n",
 		       node, (unsigned long long) start,

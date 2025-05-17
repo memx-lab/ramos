@@ -38,6 +38,7 @@
 #include <linux/module.h>
 
 #include <asm/tlbflush.h>
+#include <asm/numa.h>
 
 #include "internal.h"
 #include "shuffle.h"
@@ -1230,9 +1231,25 @@ static int __try_online_node(int nid, bool set_node_online)
 		ret = -ENOMEM;
 		goto out;
 	}
+#ifdef CONFIG_NVSL_VNUMA
+	pgdat->tier_id = numa_node_get_tier_id(nid);
+	pgdat->dax_id = numa_node_get_dax_id(nid);
+#endif
 
 	if (set_node_online) {
 		node_set_online(nid);
+#ifdef CONFIG_NVSL_VNUMA
+		ret = numa_add_to_vnode(nid, pgdat->tier_id, pgdat->dax_id);
+		if (ret < 0) {
+			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
+				nid, pgdat->tier_id, pgdat->dax_id);
+			// TODO: need to handle this failure node
+			// otherwise vNUMA will not allocate pages on this node
+		}
+#ifdef CONFIG_NVSL_DEBUG
+		numa_dump_vnodes();
+#endif
+#endif
 		ret = register_one_node(nid);
 		BUG_ON(ret);
 	}
@@ -1318,6 +1335,7 @@ bool mhp_supports_memmap_on_memory(unsigned long size)
  */
 int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 {
+	pg_data_t *pgdat;
 	struct mhp_params params = { .pgprot = pgprot_mhp(PAGE_KERNEL) };
 	enum memblock_flags memblock_flags = MEMBLOCK_NONE;
 	struct vmem_altmap mhp_altmap = {};
@@ -1393,6 +1411,19 @@ int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 		 * We online node here. We can't roll back from here.
 		 */
 		node_set_online(nid);
+#ifdef CONFIG_NVSL_VNUMA
+		pgdat = NODE_DATA(nid);
+		ret = numa_add_to_vnode(nid, pgdat->tier_id, pgdat->dax_id);
+		if (ret < 0) {
+			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
+				nid, pgdat->tier_id, pgdat->dax_id);
+			// TODO: need to handle this failure node
+			// otherwise vNUMA will not allocate pages on this node
+		}
+#ifdef CONFIG_NVSL_DEBUG
+		numa_dump_vnodes();
+#endif
+#endif
 		ret = __register_one_node(nid);
 		BUG_ON(ret);
 	}

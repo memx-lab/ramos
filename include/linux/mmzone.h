@@ -1395,6 +1395,12 @@ typedef struct pglist_data {
 
 
 #ifdef CONFIG_NVSL_VNUMA
+struct numa_phys_info {
+	u16 tier_id;
+	u32 dax_id;
+	bool initialized;
+};
+
 struct vnuma_node_group_data {
 	/* For NUMA nodes from same dax device, we construct a vNUMA group. */
 	u32 dax_id;
