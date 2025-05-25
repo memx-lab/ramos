@@ -1879,56 +1879,84 @@ static int policy_node(gfp_t gfp, struct mempolicy *policy, int nd)
 }
 
 #ifdef CONFIG_NVSL_VNUMA
-static int vnuma_find_virtual_node(gfp_t gfp, struct mempolicy *policy, int nd)
+static const u8 vnode_weights[MAX_NUM_VNUMA_NODE] = {5, 3};
+
+static unsigned int vnuma_get_updated_weight_sum(void)
 {
-	int origin_node;
+    unsigned int vnode_weight_sum = 0;
 
-	origin_node = policy_node(gfp, policy, nd);
-	/*
-	 * TODO: find vNUMA node id.
-	 * Currently, current node id is same as vNUMA node under architecture
-	 * with only one CPU-node and many CPU-less (memory) nodes.
-	 */
-	nd = origin_node;
-
-	return nd;
+    for (int i = 0; i < MAX_NUM_VNUMA_NODE; i++) {
+        vnode_weight_sum += vnode_weights[i];
+    }
+    return vnode_weight_sum;
 }
 
-static int vnuma_find_node(int vnode_id)
+static unsigned int vnuma_weighted_interleave_vnodes(void)
 {
-	u32 next_group_id;
-	u32 next_node_idx;
-	int node_id;
-
-	struct task_struct *me = current;
+    struct task_struct *me = current;
+    int slot = me->vnode_weight_cur;
+    unsigned int vnode_weight_sum = vnuma_get_updated_weight_sum();
+    int acc = 0;
 	struct vnuma_node_data *vnode_data;
 
-	if (vnode_id >= MAX_NUM_VNUMA_NODE) {
-		printk_nvsl_error("Invalid vnode id %u\n", vnode_id);
-		return -EINVAL;
+	// if one of vNUMA nodes is empty, we downgrade to vNUMA 0 interleaving
+	// since vNUMA 0 maintains CPU and thus always has nodes
+	// TODO: fix it -- find vNUMA which has nodes if vNUMA 0 is empty
+	for (int vid = 0; vid < MAX_NUM_VNUMA_NODE; vid++) {
+		vnode_data = VNUMA_NODE_DATA(vid);
+		if (vnode_data->nr_groups == 0) {
+			return 0;
+		}
 	}
 
-	vnode_data = VNUMA_NODE_DATA(vnode_id);
+    for (int vid = 0; vid < MAX_NUM_VNUMA_NODE; vid++) {
+        acc += vnode_weights[vid];
+        if (slot < acc) {
+            me->vnode_weight_cur = (slot + 1) % vnode_weight_sum;
+            return vid;
+        }
+    }
 
-	/* Find next interleaved group first */
-	next_group_id = me->vnode_il_prev_gid[vnode_id] + 1;
-	if (next_group_id >= vnode_data->nr_groups) {
-		next_group_id = 0;
+    WARN_ON_ONCE(1);
+    me->vnode_weight_cur = 0;
+    return 0;
+}
+
+static unsigned int vnuma_interleave_nodes(int vnode_id)
+{
+    u32 next_group_id;
+    u32 next_node_idx;
+    int node_id;
+    struct task_struct *me = current;
+    struct vnuma_node_data *vnode_data;
+
+    if (vnode_id >= MAX_NUM_VNUMA_NODE) {
+        printk_nvsl_error("Invalid vnode id %d\n", vnode_id);
+        return -EINVAL;
+    }
+
+    vnode_data = VNUMA_NODE_DATA(vnode_id);
+	if (vnode_data->nr_groups == 0) {
+		printk_nvsl_error("vNUMA node has no groups id %d\n", vnode_id);
+        return -EINVAL;
 	}
-	me->vnode_il_prev_gid[vnode_id] = next_group_id;
 
-	/*
-	 * Find a node from group
-	 * TODO: find optimal node under this group
-	 */
-	next_node_idx = me->vnode_il_prev_nidx[vnode_id][next_group_id] + 1;
-	if (next_node_idx >= vnode_data->group_data[next_group_id].nr_nodes) {
-		next_node_idx = 0;
-	}
-	me->vnode_il_prev_nidx[vnode_id][next_group_id] = next_node_idx;
-	node_id = vnode_data->group_data[next_group_id].node_ids[next_node_idx];
+    /* Find next interleaved group first */
+    next_group_id = me->vnode_il_prev_gid[vnode_id] + 1;
+    if (next_group_id >= vnode_data->nr_groups) {
+        next_group_id = 0;
+    }
+    me->vnode_il_prev_gid[vnode_id] = next_group_id;
 
-	return node_id;
+    /* Group has at least one node */
+    next_node_idx = me->vnode_il_prev_nidx[vnode_id][next_group_id] + 1;
+    if (next_node_idx >= vnode_data->group_data[next_group_id].nr_nodes) {
+        next_node_idx = 0;
+    }
+    me->vnode_il_prev_nidx[vnode_id][next_group_id] = next_node_idx;
+    node_id = vnode_data->group_data[next_group_id].node_ids[next_node_idx];
+
+    return node_id;
 }
 #endif /* CONFIG_NVSL_VNUMA */
 
@@ -2288,13 +2316,15 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 	}
 
 #ifdef CONFIG_NVSL_VNUMA
-	vnode_id = vnuma_find_virtual_node(gfp, pol, node);
-	preferred_nid = vnuma_find_node(vnode_id);
+	vnode_id = vnuma_weighted_interleave_vnodes();
+	preferred_nid = vnuma_interleave_nodes(vnode_id);
+	nmask = NULL;
 	if (preferred_nid < 0) {
-		printk_nvsl_debug("Cannot find node for vnode %u, use default policy instead\n", vnode_id);
-		preferred_nid = policy_node(gfp, pol, node);
-	}
-	folio = __folio_alloc(gfp, order, preferred_nid, NULL);
+            printk_nvsl_debug("Cannot find preferred id for node %d, use default policy.\n", node);
+            nmask = policy_nodemask(gfp, pol);
+            preferred_nid = policy_node(gfp, pol, node);
+    }
+	folio = __folio_alloc(gfp, order, preferred_nid, nmask);
 	mpol_cond_put(pol);
 #else
 	nmask = policy_nodemask(gfp, pol);

@@ -1250,8 +1250,9 @@ struct task_struct {
 	short				il_prev;
 	short				pref_node_fork;
 #ifdef CONFIG_NVSL_VNUMA
-	u32					vnode_il_prev_gid[MAX_NUM_VNUMA_NODE];
-	u64					vnode_il_prev_nidx[MAX_NUM_VNUMA_NODE][MAX_NUM_VNUMA_GROUP];
+	unsigned int	vnode_weight_cur;
+	u32				vnode_il_prev_gid[MAX_NUM_VNUMA_NODE];
+	u64				vnode_il_prev_nidx[MAX_NUM_VNUMA_NODE][MAX_NUM_VNUMA_GROUP];
 #endif /* CONFIG_NVSL_VNUMA */
 #endif /* CONFIG_NUMA */
 #ifdef CONFIG_NUMA_BALANCING
