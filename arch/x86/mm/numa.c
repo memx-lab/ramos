@@ -29,6 +29,9 @@ EXPORT_SYMBOL(node_data);
 struct vnuma_node_data vnuma_nodes[MAX_NUM_VNUMA_NODE] __read_mostly;
 EXPORT_SYMBOL(vnuma_nodes);
 
+/* Used to trigger page re-distribution for hot-plug NUMA node */
+atomic_t numa_rescan_global_flag = ATOMIC_INIT(0);
+
 /*
  * We use this to record NUMA node physical information.
  * When hotplug new memory and thus new numa node, we use this information
@@ -727,7 +730,14 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 }
 
 #ifdef CONFIG_NVSL_VNUMA
-static int __init numa_add_to_vnode_group(struct vnuma_node_group_data *vnode_group_data, int nodeid)
+void trigger_numa_rescan(void)
+{
+	atomic_xor(1, &numa_rescan_global_flag);
+	printk_nvsl_info("Global NUMA rescan flag toggled: %d\n",
+			atomic_read(&numa_rescan_global_flag));
+}
+
+static int numa_add_to_vnode_group(struct vnuma_node_group_data *vnode_group_data, int nodeid)
 {
 	if (vnode_group_data->nr_nodes >= MAX_NUMNODES) {
 		printk_nvsl_error("too many nodes in vnode group\n");
@@ -744,6 +754,7 @@ int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
 	int i, vnode_id;
 	struct vnuma_node_data *vnode_data;
 	struct vnuma_node_group_data *vnode_group_data;
+	int ret;
 
 	vnode_id = tier_id;
 	vnode_data = &vnuma_nodes[vnode_id];
@@ -753,7 +764,12 @@ int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
 		vnode_group_data = &vnode_data->group_data[i];
 		if (vnode_group_data->dax_id == dax_id) {
 			/* Try to add the NUMA node to existing group */
-			return numa_add_to_vnode_group(vnode_group_data, nodeid);
+			ret = numa_add_to_vnode_group(vnode_group_data, nodeid);
+			if (ret < 0) {
+				return -EINVAL;
+			}
+			node_set(nodeid, vnode_data->all_nodes);
+			return 0;
 		}
 	}
 
@@ -765,7 +781,12 @@ int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
 	vnode_data->group_data[vnode_data->nr_groups].dax_id = dax_id;
 	vnode_group_data = &vnode_data->group_data[vnode_data->nr_groups];
 	vnode_data->nr_groups++;
-	return numa_add_to_vnode_group(vnode_group_data, nodeid);
+	ret = numa_add_to_vnode_group(vnode_group_data, nodeid);
+	if (ret < 0) {
+		return -EINVAL;
+	}
+	node_set(nodeid, vnode_data->all_nodes);
+	return 0;
 }
 
 static int __init numa_construct_vnodes(void)

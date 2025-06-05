@@ -1415,6 +1415,7 @@ struct vnuma_node_data {
 	 * record dax ID of each vNUMA group above.
 	 */
 	int nr_groups;
+	nodemask_t all_nodes; /* Number of numa nodes in this vNUMA node */
 	struct vnuma_node_group_data group_data[MAX_NUM_VNUMA_GROUP];
 };
 #endif /* CONFIG_NVSL_VNUMA */

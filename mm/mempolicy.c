@@ -1879,6 +1879,7 @@ static int policy_node(gfp_t gfp, struct mempolicy *policy, int nd)
 }
 
 #ifdef CONFIG_NVSL_VNUMA
+// TODO: the weight should be configurable by users
 static const u8 vnode_weights[MAX_NUM_VNUMA_NODE] = {5, 3};
 
 static unsigned int vnuma_get_updated_weight_sum(void)
@@ -1922,6 +1923,36 @@ static unsigned int vnuma_weighted_interleave_vnodes(void)
     return 0;
 }
 
+/* Static interleaving for a VMA with know offset */
+static unsigned int vnuma_offset_il_node(int vnode_id, unsigned long offset)
+{
+	struct vnuma_node_data *vnode_data;
+	nodemask_t nodemask;
+	unsigned int target, nnodes;
+	int i;
+	int nid;
+
+	if (vnode_id >= MAX_NUM_VNUMA_NODE) {
+        printk_nvsl_error("Invalid vnode id %d\n", vnode_id);
+        return -EINVAL;
+    }
+
+	vnode_data = VNUMA_NODE_DATA(vnode_id);
+	nodemask = vnode_data->all_nodes;
+	nnodes = nodes_weight(nodemask);
+	if (!nnodes) {
+		printk_nvsl_error("vnode %d is empty\n", vnode_id);
+		return numa_node_id();
+	}
+	target = (unsigned int)offset % nnodes;
+	nid = first_node(nodemask);
+	for (i = 0; i < target; i++)
+		nid = next_node(nid, nodemask);
+
+	return nid;
+}
+
+/* Dynamic interleving for a process */
 static unsigned int vnuma_interleave_nodes(int vnode_id)
 {
     u32 next_group_id;
@@ -1937,7 +1968,7 @@ static unsigned int vnuma_interleave_nodes(int vnode_id)
 
     vnode_data = VNUMA_NODE_DATA(vnode_id);
 	if (vnode_data->nr_groups == 0) {
-		printk_nvsl_error("vNUMA node has no groups id %d\n", vnode_id);
+		printk_nvsl_error("vnode %d has no groups\n", vnode_id);
         return -EINVAL;
 	}
 
@@ -1957,6 +1988,27 @@ static unsigned int vnuma_interleave_nodes(int vnode_id)
     node_id = vnode_data->group_data[next_group_id].node_ids[next_node_idx];
 
     return node_id;
+}
+
+static unsigned int vnuma_interleave_nid(int vnode_id,
+		struct vm_area_struct *vma, unsigned long addr, int shift)
+{
+	if (vma) {
+		unsigned long off;
+
+		/*
+		 * for small pages, there is no difference between
+		 * shift and PAGE_SHIFT, so the bit-shift is safe.
+		 * for huge pages, since vm_pgoff is in units of small
+		 * pages, we need to shift off the always 0 bits to get
+		 * a useful offset.
+		 */
+		BUG_ON(shift < PAGE_SHIFT);
+		off = vma->vm_pgoff >> (shift - PAGE_SHIFT);
+		off += (addr - vma->vm_start) >> shift;
+		return vnuma_offset_il_node(vnode_id, off);
+	} else
+		return vnuma_interleave_nodes(vnode_id);
 }
 #endif /* CONFIG_NVSL_VNUMA */
 
@@ -2317,7 +2369,7 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 
 #ifdef CONFIG_NVSL_VNUMA
 	vnode_id = vnuma_weighted_interleave_vnodes();
-	preferred_nid = vnuma_interleave_nodes(vnode_id);
+	preferred_nid = vnuma_interleave_nid(vnode_id, vma, addr, PAGE_SHIFT + order);
 	nmask = NULL;
 	if (preferred_nid < 0) {
             printk_nvsl_debug("Cannot find preferred id for node %d, use default policy.\n", node);
@@ -2655,18 +2707,30 @@ static void sp_free(struct sp_node *n)
 int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long addr)
 {
 	struct mempolicy *pol;
-	struct zoneref *z;
 	int curnid = page_to_nid(page);
 	unsigned long pgoff;
-	int thiscpu = raw_smp_processor_id();
-	int thisnid = cpu_to_node(thiscpu);
 	int polnid = NUMA_NO_NODE;
 	int ret = NUMA_NO_NODE;
+#ifndef CONFIG_NVSL_VNUMA
+	struct zoneref *z;
+	int thiscpu = raw_smp_processor_id();
+	int thisnid = cpu_to_node(thiscpu);
+#else
+	int vnode_id;
+	//struct task_struct *p = current;
+#endif
 
 	pol = get_vma_policy(vma, addr);
 	if (!(pol->flags & MPOL_F_MOF))
 		goto out;
 
+#ifdef CONFIG_NVSL_VNUMA
+	// TODO: check weighted vnodes
+	vnode_id = 0;
+	pgoff = vma->vm_pgoff;
+	pgoff += (addr - vma->vm_start) >> PAGE_SHIFT;
+	polnid = vnuma_offset_il_node(vnode_id, pgoff);
+#else
 	switch (pol->mode) {
 	case MPOL_INTERLEAVE:
 		pgoff = vma->vm_pgoff;
@@ -2719,12 +2783,15 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 		if (!should_numa_migrate_memory(current, page, curnid, thiscpu))
 			goto out;
 	}
+#endif
 
 	if (curnid != polnid)
 		ret = polnid;
 out:
 	mpol_cond_put(pol);
 
+	//printk_nvsl_debug("pid %d, offset %ld, current id %d policy id: %d, ret %d\n",
+	//	p->tgid, pgoff, curnid, polnid, ret);
 	return ret;
 }
 
