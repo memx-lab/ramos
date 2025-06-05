@@ -36,6 +36,8 @@
 #include <linux/compaction.h>
 #include <linux/rmap.h>
 #include <linux/module.h>
+#include <linux/sched/sysctl.h>
+#include <linux/sched/numa_balancing.h>
 
 #include <asm/tlbflush.h>
 #include <asm/numa.h>
@@ -1246,6 +1248,10 @@ static int __try_online_node(int nid, bool set_node_online)
 			// TODO: need to handle this failure node
 			// otherwise vNUMA will not allocate pages on this node
 		}
+		/* Force enabling NUMA balancing when hot-adding new nodes */
+		if (!(sysctl_numa_balancing_mode & NUMA_BALANCING_NORMAL)) {
+			set_numabalancing_state(true);
+		}
 #ifdef CONFIG_NVSL_DEBUG
 		numa_dump_vnodes();
 #endif
@@ -1419,6 +1425,10 @@ int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 				nid, pgdat->tier_id, pgdat->dax_id);
 			// TODO: need to handle this failure node
 			// otherwise vNUMA will not allocate pages on this node
+		}
+		/* Force enabling NUMA balancing when hot-adding new nodes */
+		if (!(sysctl_numa_balancing_mode & NUMA_BALANCING_NORMAL)) {
+			set_numabalancing_state(true);
 		}
 #ifdef CONFIG_NVSL_DEBUG
 		numa_dump_vnodes();
