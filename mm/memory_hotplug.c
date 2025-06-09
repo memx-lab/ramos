@@ -2097,7 +2097,7 @@ void try_offline_node(int nid)
 	 */
 	node_set_offline(nid);
 #ifdef CONFIG_NVSL_VNUMA
-
+	numa_remove_from_vnode(nid);
 #ifdef CONFIG_NVSL_DEBUG
 	numa_dump_vnodes();
 #endif

@@ -41,6 +41,7 @@ extern u32 numa_node_get_dax_id(int nid);
 extern int __init numa_add_memblk_elas_mm(int nid, u16 tier_id, u32 dax_id, u64 seg_id,
 						u64 start, u64 end);
 extern int numa_add_to_vnode(int nodeid, u16 tier_id);
+extern int numa_remove_from_vnode(int nodeid);
 extern void numa_dump_vnodes(void);
 #endif /* CONFIG_NVSL_VNUMA */
 

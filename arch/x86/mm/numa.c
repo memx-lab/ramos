@@ -769,6 +769,33 @@ int numa_add_to_vnode(int nodeid, u16 tier_id)
 	return 0;
 }
 
+int numa_remove_from_vnode(int nodeid)
+{
+	int i, j, k;
+	struct vnuma_node_data *vnode_data;
+
+	for (i = 0; i < MAX_NUM_VNUMA_NODE; i++) {
+		vnode_data = &vnuma_nodes[i];
+
+		for (j = 0; j < vnode_data->nr_nodes; j++) {
+			if (vnode_data->node_ids[j] == nodeid) {
+				/* Shift remaining entries */
+				for (k = j; k < vnode_data->nr_nodes - 1; k++) {
+					vnode_data->node_ids[k] = vnode_data->node_ids[k + 1];
+				}
+				vnode_data->nr_nodes--;
+				node_clear(nodeid, vnode_data->all_nodes);
+
+				printk_nvsl_info("Removed node %d from vnode (tier) %d\n", nodeid, i);
+				return 0;
+			}
+		}
+	}
+
+	/* Not found in any vnode */
+	return -ENOENT;
+}
+
 static int __init numa_construct_vnodes(void)
 {
 	int ret, nodeid;
