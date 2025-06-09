@@ -1241,7 +1241,7 @@ static int __try_online_node(int nid, bool set_node_online)
 	if (set_node_online) {
 		node_set_online(nid);
 #ifdef CONFIG_NVSL_VNUMA
-		ret = numa_add_to_vnode(nid, pgdat->tier_id, pgdat->dax_id);
+		ret = numa_add_to_vnode(nid, pgdat->tier_id);
 		if (ret < 0) {
 			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
 				nid, pgdat->tier_id, pgdat->dax_id);
@@ -1419,7 +1419,7 @@ int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 		node_set_online(nid);
 #ifdef CONFIG_NVSL_VNUMA
 		pgdat = NODE_DATA(nid);
-		ret = numa_add_to_vnode(nid, pgdat->tier_id, pgdat->dax_id);
+		ret = numa_add_to_vnode(nid, pgdat->tier_id);
 		if (ret < 0) {
 			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
 				nid, pgdat->tier_id, pgdat->dax_id);

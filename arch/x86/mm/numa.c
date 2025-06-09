@@ -737,9 +737,9 @@ void trigger_numa_rescan(void)
 			atomic_read(&numa_rescan_global_flag));
 }
 
-int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
+int numa_add_to_vnode(int nodeid, u16 tier_id)
 {
-	int vnode_id;
+	int i, vnode_id;
 	struct vnuma_node_data *vnode_data;
 
 	if (tier_id >= MAX_NUM_VNUMA_NODE) {
@@ -749,13 +749,19 @@ int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
 
 	vnode_id = tier_id;
 	vnode_data = &vnuma_nodes[vnode_id];
-	if (vnode_data->nr_nodes >= MAX_NUMNODES) {
-		printk_nvsl_error("too many nodes in vnode %u\n", vnode_id);
+
+	/* Check duplicate */
+	for (i = 0; i < vnode_data->nr_nodes; i++) {
+		if (vnode_data->node_ids[i] == nodeid)
+			return -EEXIST;
+	}
+
+	if (vnode_data->nr_nodes >= MAX_NODES_PER_VNODE) {
+		printk_nvsl_error("too many nodes in vnode %d\n", vnode_id);
 		numa_dump_vnodes();
 		return -EINVAL;
 	}
 
-	/* TODO: check duplicated nodes in groups */
 	vnode_data->node_ids[vnode_data->nr_nodes] = nodeid;
 	vnode_data->nr_nodes++;
 	node_set(nodeid, vnode_data->all_nodes);
@@ -766,18 +772,14 @@ int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
 static int __init numa_construct_vnodes(void)
 {
 	int ret, nodeid;
-	u16 tier_id; u32 dax_id; u64 seg_id;
 	pg_data_t *pgdat;
 
 	for_each_online_node(nodeid) {
 		pgdat = NODE_DATA(nodeid);
-		tier_id = pgdat->tier_id;
-		dax_id = pgdat->dax_id;
-		seg_id = pgdat->seg_id;
 
-		ret = numa_add_to_vnode(nodeid, tier_id, dax_id);
+		ret = numa_add_to_vnode(nodeid, pgdat->tier_id);
 		if (ret < 0) {
-			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n", nodeid, tier_id, dax_id);
+			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n", nodeid, pgdat->tier_id, pgdat->dax_id);
 			return ret;
 		}
 	}

@@ -21,6 +21,7 @@
  * We should make it configurable in the future.
  */
 #define MAX_NUM_VNUMA_NODE 2
+#define MAX_NODES_PER_VNODE (MAX_NUMNODES / MAX_NUM_VNUMA_NODE)
 #endif /* CONFIG_NVSL_VNUMA */
 
 /* optionally keep NUMA memory info available post init */
