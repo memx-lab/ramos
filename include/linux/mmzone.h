@@ -1401,22 +1401,11 @@ struct numa_phys_info {
 	bool initialized;
 };
 
-struct vnuma_node_group_data {
-	/* For NUMA nodes from same dax device, we construct a vNUMA group. */
-	u32 dax_id;
-	int nr_nodes;
-	int node_ids[MAX_NUMNODES];
-};
-
+/* vNUMA node contains nodes from the same memory tier */
 struct vnuma_node_data {
-	/*
-	 * The index of vNUMA node is same as tier ID, so we do not record tier id here.
-	 * However, the index of vNUMA group and dax ID might be different, we therefore
-	 * record dax ID of each vNUMA group above.
-	 */
-	int nr_groups;
-	nodemask_t all_nodes; /* Number of numa nodes in this vNUMA node */
-	struct vnuma_node_group_data group_data[MAX_NUM_VNUMA_GROUP];
+	int nr_nodes; /* Number of numa nodes */
+	nodemask_t all_nodes; /* Node mask of all nodes */
+	int node_ids[MAX_NUMNODES];
 };
 #endif /* CONFIG_NVSL_VNUMA */
 

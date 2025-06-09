@@ -21,13 +21,6 @@
  * We should make it configurable in the future.
  */
 #define MAX_NUM_VNUMA_NODE 2
-/*
- * The maximum number of vNUMA group should be larger than
- * number of parallel units (PUs). 24 is larger than PUs of
- * current memory pool. We should make it configurable in
- * the future.
- */
-#define MAX_NUM_VNUMA_GROUP 24
 #endif /* CONFIG_NVSL_VNUMA */
 
 /* optionally keep NUMA memory info available post init */

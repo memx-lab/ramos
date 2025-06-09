@@ -2096,6 +2096,12 @@ void try_offline_node(int nid)
 	 * node now.
 	 */
 	node_set_offline(nid);
+#ifdef CONFIG_NVSL_VNUMA
+
+#ifdef CONFIG_NVSL_DEBUG
+	numa_dump_vnodes();
+#endif
+#endif
 	unregister_one_node(nid);
 }
 EXPORT_SYMBOL(try_offline_node);

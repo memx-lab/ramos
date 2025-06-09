@@ -1902,10 +1902,10 @@ static unsigned int vnuma_weighted_interleave_vnodes(void)
 
 	// if one of vNUMA nodes is empty, we downgrade to vNUMA 0 interleaving
 	// since vNUMA 0 maintains CPU and thus always has nodes
-	// TODO: fix it -- find vNUMA which has nodes if vNUMA 0 is empty
+	// TODO: find vNUMA which has nodes if vNUMA 0 is empty
 	for (int vid = 0; vid < MAX_NUM_VNUMA_NODE; vid++) {
 		vnode_data = VNUMA_NODE_DATA(vid);
-		if (vnode_data->nr_groups == 0) {
+		if (vnode_data->nr_nodes == 0) {
 			return 0;
 		}
 	}
@@ -1955,11 +1955,10 @@ static unsigned int vnuma_offset_il_node(int vnode_id, unsigned long offset)
 /* Dynamic interleving for a process */
 static unsigned int vnuma_interleave_nodes(int vnode_id)
 {
-    u32 next_group_id;
-    u32 next_node_idx;
     int node_id;
     struct task_struct *me = current;
     struct vnuma_node_data *vnode_data;
+	u32 node_idx, next_node_idx;
 
     if (vnode_id >= MAX_NUM_VNUMA_NODE) {
         printk_nvsl_error("Invalid vnode id %d\n", vnode_id);
@@ -1967,25 +1966,19 @@ static unsigned int vnuma_interleave_nodes(int vnode_id)
     }
 
     vnode_data = VNUMA_NODE_DATA(vnode_id);
-	if (vnode_data->nr_groups == 0) {
-		printk_nvsl_error("vnode %d has no groups\n", vnode_id);
+	if (vnode_data->nr_nodes == 0) {
+		printk_nvsl_error("vnode %d has no nodes\n", vnode_id);
         return -EINVAL;
 	}
 
-    /* Find next interleaved group first */
-    next_group_id = me->vnode_il_prev_gid[vnode_id] + 1;
-    if (next_group_id >= vnode_data->nr_groups) {
-        next_group_id = 0;
-    }
-    me->vnode_il_prev_gid[vnode_id] = next_group_id;
-
-    /* Group has at least one node */
-    next_node_idx = me->vnode_il_prev_nidx[vnode_id][next_group_id] + 1;
-    if (next_node_idx >= vnode_data->group_data[next_group_id].nr_nodes) {
-        next_node_idx = 0;
-    }
-    me->vnode_il_prev_nidx[vnode_id][next_group_id] = next_node_idx;
-    node_id = vnode_data->group_data[next_group_id].node_ids[next_node_idx];
+	node_idx = me->vnode_il_prev_nidx[vnode_id];
+	node_id = vnode_data->node_ids[node_idx];
+	/* Prepare next node for interleaving */
+	next_node_idx = me->vnode_il_prev_nidx[vnode_id] + 1;
+	if (next_node_idx >= vnode_data->nr_nodes) {
+		next_node_idx = 0;
+	}
+	me->vnode_il_prev_nidx[vnode_id] = next_node_idx;
 
     return node_id;
 }

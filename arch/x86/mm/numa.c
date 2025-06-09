@@ -737,55 +737,29 @@ void trigger_numa_rescan(void)
 			atomic_read(&numa_rescan_global_flag));
 }
 
-static int numa_add_to_vnode_group(struct vnuma_node_group_data *vnode_group_data, int nodeid)
-{
-	if (vnode_group_data->nr_nodes >= MAX_NUMNODES) {
-		printk_nvsl_error("too many nodes in vnode group\n");
-		return -EINVAL;
-	}
-	/* TODO: check duplicated nodes in groups */
-	vnode_group_data->node_ids[vnode_group_data->nr_nodes] = nodeid;
-	vnode_group_data->nr_nodes++;
-	return 0;
-}
-
 int numa_add_to_vnode(int nodeid, u16 tier_id, u32 dax_id)
 {
-	int i, vnode_id;
+	int vnode_id;
 	struct vnuma_node_data *vnode_data;
-	struct vnuma_node_group_data *vnode_group_data;
-	int ret;
+
+	if (tier_id >= MAX_NUM_VNUMA_NODE) {
+		printk_nvsl_error("invalid tier id %u\n", tier_id);
+		return -EINVAL;
+	}
 
 	vnode_id = tier_id;
 	vnode_data = &vnuma_nodes[vnode_id];
-
-	/* Check existing groups and find one indicating to same dax ID */
-	for (i = 0; i < vnode_data->nr_groups; i++) {
-		vnode_group_data = &vnode_data->group_data[i];
-		if (vnode_group_data->dax_id == dax_id) {
-			/* Try to add the NUMA node to existing group */
-			ret = numa_add_to_vnode_group(vnode_group_data, nodeid);
-			if (ret < 0) {
-				return -EINVAL;
-			}
-			node_set(nodeid, vnode_data->all_nodes);
-			return 0;
-		}
-	}
-
-	/* Try to build a new group if cannot find an existing group */
-	if (vnode_data->nr_groups >= MAX_NUM_VNUMA_GROUP) {
-		printk_nvsl_error("too many groups in vnode %u\n", vnode_id);
+	if (vnode_data->nr_nodes >= MAX_NUMNODES) {
+		printk_nvsl_error("too many nodes in vnode %u\n", vnode_id);
+		numa_dump_vnodes();
 		return -EINVAL;
 	}
-	vnode_data->group_data[vnode_data->nr_groups].dax_id = dax_id;
-	vnode_group_data = &vnode_data->group_data[vnode_data->nr_groups];
-	vnode_data->nr_groups++;
-	ret = numa_add_to_vnode_group(vnode_group_data, nodeid);
-	if (ret < 0) {
-		return -EINVAL;
-	}
+
+	/* TODO: check duplicated nodes in groups */
+	vnode_data->node_ids[vnode_data->nr_nodes] = nodeid;
+	vnode_data->nr_nodes++;
 	node_set(nodeid, vnode_data->all_nodes);
+
 	return 0;
 }
 
@@ -812,27 +786,22 @@ static int __init numa_construct_vnodes(void)
 
 void numa_dump_vnodes(void)
 {
-	int vnode_idx, group_idx, node_idx;
+	int vnode_idx, node_idx;
 	struct vnuma_node_data *vnode_data;
-	struct vnuma_node_group_data *vnode_group_data;
 
 	printk_nvsl_info("Dump vNUMA nodes:\n");
-	printk_nvsl_info("  Total vNUMA nodes: %u\n", MAX_NUM_VNUMA_NODE);
+	printk_nvsl_info("Total vNUMA nodes: %u\n", MAX_NUM_VNUMA_NODE);
 
 	for (vnode_idx = 0; vnode_idx < MAX_NUM_VNUMA_NODE; vnode_idx++) {
 		vnode_data = &vnuma_nodes[vnode_idx];
-		printk_nvsl_info("    vNUMA node %u:\n", vnode_idx);
-		for (group_idx = 0; group_idx < vnode_data->nr_groups; group_idx++) {
-			vnode_group_data = &vnode_data->group_data[group_idx];
-			printk_nvsl_info("      Group %u:\n", group_idx);
-			for (node_idx = 0; node_idx < vnode_group_data->nr_nodes; node_idx++) {
-				printk_nvsl_info("        Node %u\n", vnode_group_data->node_ids[node_idx]);
-			}
-			printk_nvsl_info("\n");
+		printk_nvsl_info("  vNUMA node %u:\n", vnode_idx);
+		for (node_idx = 0; node_idx < vnode_data->nr_nodes; node_idx++) {
+			printk_nvsl_info("    Node %u", vnode_data->node_ids[node_idx]);
 		}
+		printk_nvsl_info("\n");
+		printk_nvsl_info("\n");
 	}
 }
-
 #endif /* CONFIG_NVSL_VNUMA */
 
 /*
