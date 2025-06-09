@@ -828,7 +828,6 @@ void numa_dump_vnodes(void)
 			printk_nvsl_info("    Node %u", vnode_data->node_ids[node_idx]);
 		}
 		printk_nvsl_info("\n");
-		printk_nvsl_info("\n");
 	}
 }
 #endif /* CONFIG_NVSL_VNUMA */
