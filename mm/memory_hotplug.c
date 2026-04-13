@@ -1233,17 +1233,17 @@ static int __try_online_node(int nid, bool set_node_online)
 		ret = -ENOMEM;
 		goto out;
 	}
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	pgdat->tier_id = numa_node_get_tier_id(nid);
 	pgdat->dax_id = numa_node_get_dax_id(nid);
 #endif
 
 	if (set_node_online) {
 		node_set_online(nid);
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 		ret = numa_add_to_vnode(nid, pgdat->tier_id);
 		if (ret < 0) {
-			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
+			printk_ramos_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
 				nid, pgdat->tier_id, pgdat->dax_id);
 			// TODO: need to handle this failure node
 			// otherwise vNUMA will not allocate pages on this node
@@ -1252,7 +1252,7 @@ static int __try_online_node(int nid, bool set_node_online)
 		if (!(sysctl_numa_balancing_mode & NUMA_BALANCING_NORMAL)) {
 			set_numabalancing_state(true);
 		}
-#ifdef CONFIG_NVSL_DEBUG
+#ifdef CONFIG_RAMOS_DEBUG
 		numa_dump_vnodes();
 #endif
 #endif
@@ -1417,11 +1417,11 @@ int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 		 * We online node here. We can't roll back from here.
 		 */
 		node_set_online(nid);
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 		pgdat = NODE_DATA(nid);
 		ret = numa_add_to_vnode(nid, pgdat->tier_id);
 		if (ret < 0) {
-			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
+			printk_ramos_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
 				nid, pgdat->tier_id, pgdat->dax_id);
 			// TODO: need to handle this failure node
 			// otherwise vNUMA will not allocate pages on this node
@@ -1430,7 +1430,7 @@ int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 		if (!(sysctl_numa_balancing_mode & NUMA_BALANCING_NORMAL)) {
 			set_numabalancing_state(true);
 		}
-#ifdef CONFIG_NVSL_DEBUG
+#ifdef CONFIG_RAMOS_DEBUG
 		numa_dump_vnodes();
 #endif
 #endif
@@ -2096,9 +2096,9 @@ void try_offline_node(int nid)
 	 * node now.
 	 */
 	node_set_offline(nid);
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	numa_remove_from_vnode(nid);
-#ifdef CONFIG_NVSL_DEBUG
+#ifdef CONFIG_RAMOS_DEBUG
 	numa_dump_vnodes();
 #endif
 #endif

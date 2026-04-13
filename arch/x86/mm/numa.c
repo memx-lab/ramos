@@ -25,7 +25,7 @@ nodemask_t numa_nodes_parsed __initdata;
 struct pglist_data *node_data[MAX_NUMNODES] __read_mostly;
 EXPORT_SYMBOL(node_data);
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 struct vnuma_node_data vnuma_nodes[MAX_NUM_VNUMA_NODE] __read_mostly;
 EXPORT_SYMBOL(vnuma_nodes);
 
@@ -38,7 +38,7 @@ atomic_t numa_rescan_global_flag = ATOMIC_INIT(0);
  * to construct new virtual node.
  */
 struct numa_phys_info numa_phys_info[MAX_NUMNODES] __read_mostly;
-#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_RAMOS_NUMA */
 
 static struct numa_meminfo numa_meminfo __initdata_or_meminfo;
 static struct numa_meminfo numa_reserved_meminfo __initdata_or_meminfo;
@@ -163,7 +163,7 @@ static int __init numa_add_memblk_to(int nid, u64 start, u64 end,
 	return 0;
 }
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 static int __init numa_add_memblk_to_elas_mm(int nid, u16 tier_id, u32 dax_id, u64 seg_id,
 					u64 start, u64 end, struct numa_meminfo *mi)
 {
@@ -186,7 +186,7 @@ static int __init numa_add_memblk_to_elas_mm(int nid, u16 tier_id, u32 dax_id, u
 	mi->blk[mi->nr_blks].start = start;
 	mi->blk[mi->nr_blks].end = end;
 	mi->blk[mi->nr_blks].nid = nid;
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	mi->blk[mi->nr_blks].tier_id = tier_id;
 	mi->blk[mi->nr_blks].dax_id = dax_id;
 	mi->blk[mi->nr_blks].seg_id = seg_id;
@@ -240,11 +240,11 @@ int __init numa_add_memblk(int nid, u64 start, u64 end)
 	return numa_add_memblk_to(nid, start, end, &numa_meminfo);
 }
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 void numa_record_physical_info(int nid, u16 tier_id, u32 dax_id)
 {
 	if (nid >= MAX_NUMNODES) {
-		printk_nvsl_error("Cannot record physical information of numa node %d, max %d\n",
+		printk_ramos_error("Cannot record physical information of numa node %d, max %d\n",
 			nid, MAX_NUMNODES);
 		return;
 	}
@@ -278,7 +278,7 @@ int __init numa_add_memblk_elas_mm(int nid, u16 tier_id, u32 dax_id, u64 seg_id,
 {
 	return numa_add_memblk_to_elas_mm(nid, tier_id, dax_id, seg_id, start, end, &numa_meminfo);
 }
-#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_RAMOS_NUMA */
 
 /* Allocate NODE_DATA for a node on the local memory */
 static void __init alloc_node_data(int nid, u16 tier_id, u32 dax_id, u64 seg_id)
@@ -287,7 +287,7 @@ static void __init alloc_node_data(int nid, u16 tier_id, u32 dax_id, u64 seg_id)
 	u64 nd_pa;
 	void *nd;
 	int tnid;
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	pg_data_t *pgdat;
 #endif
 
@@ -312,7 +312,7 @@ static void __init alloc_node_data(int nid, u16 tier_id, u32 dax_id, u64 seg_id)
 
 	node_data[nid] = nd;
 	memset(NODE_DATA(nid), 0, sizeof(pg_data_t));
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	pgdat = NODE_DATA(nid);
 	pgdat->tier_id = tier_id;
 	pgdat->dax_id = dax_id;
@@ -643,7 +643,7 @@ static void __init numa_clear_kernel_node_hotplug(void)
 static int __init numa_register_memblks(struct numa_meminfo *mi)
 {
 	int i, nid;
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	u16 tier_id; u32 dax_id; u64 seg_id;
 #endif
 
@@ -657,7 +657,7 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 		struct numa_memblk *mb = &mi->blk[i];
 		memblock_set_node(mb->start, mb->end - mb->start,
 				  &memblock.memory, mb->nid);
-		printk_nvsl_info("Node %d, start %llu, end: %llu\n", mb->nid , mb->start, mb->end);
+		printk_ramos_info("Node %d, start %llu, end: %llu\n", mb->nid , mb->start, mb->end);
 	}
 
 	/*
@@ -696,7 +696,7 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 				continue;
 			start = min(mi->blk[i].start, start);
 			end = max(mi->blk[i].end, end);
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 			/*
 			 * For different memory block on same node, they should
 			 * have same tier, dax, and segment id. So we just overwrite
@@ -717,7 +717,7 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 		 */
 		if (end && (end - start) < NODE_MIN_SIZE)
 			continue;
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 		alloc_node_data(nid, tier_id, dax_id, seg_id);
 #else
 		alloc_node_data(nid, 0, 0, 0);
@@ -729,11 +729,11 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 	return 0;
 }
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 void trigger_numa_rescan(void)
 {
 	atomic_xor(1, &numa_rescan_global_flag);
-	printk_nvsl_info("Global NUMA rescan flag toggled: %d\n",
+	printk_ramos_info("Global NUMA rescan flag toggled: %d\n",
 			atomic_read(&numa_rescan_global_flag));
 }
 
@@ -743,7 +743,7 @@ int numa_add_to_vnode(int nodeid, u16 tier_id)
 	struct vnuma_node_data *vnode_data;
 
 	if (tier_id >= MAX_NUM_VNUMA_NODE) {
-		printk_nvsl_error("invalid tier id %u\n", tier_id);
+		printk_ramos_error("invalid tier id %u\n", tier_id);
 		return -EINVAL;
 	}
 
@@ -757,7 +757,7 @@ int numa_add_to_vnode(int nodeid, u16 tier_id)
 	}
 
 	if (vnode_data->nr_nodes >= MAX_NODES_PER_VNODE) {
-		printk_nvsl_error("too many nodes in vnode %d\n", vnode_id);
+		printk_ramos_error("too many nodes in vnode %d\n", vnode_id);
 		numa_dump_vnodes();
 		return -EINVAL;
 	}
@@ -786,7 +786,7 @@ int numa_remove_from_vnode(int nodeid)
 				vnode_data->nr_nodes--;
 				node_clear(nodeid, vnode_data->all_nodes);
 
-				printk_nvsl_info("Removed node %d from vnode (tier) %d\n", nodeid, i);
+				printk_ramos_info("Removed node %d from vnode (tier) %d\n", nodeid, i);
 				return 0;
 			}
 		}
@@ -806,7 +806,7 @@ static int __init numa_construct_vnodes(void)
 
 		ret = numa_add_to_vnode(nodeid, pgdat->tier_id);
 		if (ret < 0) {
-			printk_nvsl_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n", nodeid, pgdat->tier_id, pgdat->dax_id);
+			printk_ramos_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n", nodeid, pgdat->tier_id, pgdat->dax_id);
 			return ret;
 		}
 	}
@@ -818,19 +818,19 @@ void numa_dump_vnodes(void)
 	int vnode_idx, node_idx;
 	struct vnuma_node_data *vnode_data;
 
-	printk_nvsl_info("Dump vNUMA nodes:\n");
-	printk_nvsl_info("Total vNUMA nodes: %u\n", MAX_NUM_VNUMA_NODE);
+	printk_ramos_info("Dump NUMA nodes:\n");
+	printk_ramos_info("Total S-NUMA nodes: %u\n", MAX_NUM_VNUMA_NODE);
 
 	for (vnode_idx = 0; vnode_idx < MAX_NUM_VNUMA_NODE; vnode_idx++) {
 		vnode_data = &vnuma_nodes[vnode_idx];
-		printk_nvsl_info("  vNUMA node %u:\n", vnode_idx);
+		printk_ramos_info("  S-NUMA node %u:\n", vnode_idx);
 		for (node_idx = 0; node_idx < vnode_data->nr_nodes; node_idx++) {
-			printk_nvsl_info("    Node %u", vnode_data->node_ids[node_idx]);
+			printk_ramos_info("    C-NUMA %u", vnode_data->node_ids[node_idx]);
 		}
-		printk_nvsl_info("\n");
+		printk_ramos_info("\n");
 	}
 }
-#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_RAMOS_NUMA */
 
 /*
  * There are unfortunately some poorly designed mainboards around that
@@ -896,11 +896,11 @@ static int __init numa_init(int (*init_func)(void))
 	if (ret < 0)
 		return ret;
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	ret = numa_construct_vnodes();
 	if (ret < 0)
 		return ret;
-#ifdef CONFIG_NVSL_DEBUG
+#ifdef CONFIG_RAMOS_DEBUG
 	numa_dump_vnodes();
 #endif
 #endif
@@ -949,8 +949,8 @@ static int __init dummy_numa_init(void)
  */
 void __init x86_numa_init(void)
 {
-#ifdef CONFIG_NVSL_VNUMA
-	printk_nvsl_info("vNUMA feature is enabled\n");
+#ifdef CONFIG_RAMOS_NUMA
+	printk_ramos_info("vNUMA feature is enabled\n");
 #endif
 
 	if (!numa_off) {

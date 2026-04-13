@@ -18,12 +18,12 @@
 
 #ifdef CONFIG_NUMA_BALANCING
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 #define NUMA_RESCAN_BIT 0
 #define NUMA_RESCAN_MASK (1 << NUMA_RESCAN_BIT)
 extern atomic_t numa_rescan_global_flag;
 extern void trigger_numa_rescan(void);
-#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_RAMOS_NUMA */
 
 extern void task_numa_fault(int last_node, int node, int pages, int flags);
 extern pid_t task_numa_group_id(struct task_struct *p);

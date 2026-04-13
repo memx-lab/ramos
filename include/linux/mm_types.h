@@ -714,7 +714,7 @@ struct mm_struct {
 
 		/* numa_scan_seq prevents two threads remapping PTEs. */
 		int numa_scan_seq;
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 		/*
 		 * Local copy of rescan flag which controls whether to
 		 * set up PTEs to trigger page re-distribution.

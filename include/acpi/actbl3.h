@@ -217,7 +217,7 @@ struct acpi_srat_cpu_affinity {
 
 /* 1: Memory Affinity */
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 struct acpi_srat_mem_affinity {
 	struct acpi_subtable_header header;
 	u32 proximity_domain;

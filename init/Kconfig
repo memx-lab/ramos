@@ -931,12 +931,12 @@ config NUMA_BALANCING_DEFAULT_ENABLED
 	  If set, automatic NUMA balancing will be enabled if running on a NUMA
 	  machine.
 
-config NVSL_VNUMA
-	bool "NVSL virtual NUMA support"
+config RAMOS_NUMA
+	bool "RAMOS NUMA abstraction support"
 	default n
 
-config NVSL_DEBUG
-	bool "NVSL debug mode"
+config RAMOS_DEBUG
+	bool "RAMOS debug mode"
 	default n
 
 menuconfig CGROUPS

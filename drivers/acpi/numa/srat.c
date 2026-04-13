@@ -241,7 +241,7 @@ void __init acpi_numa_slit_init(struct acpi_table_slit *slit)
 int __init
 acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 {
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	u16 tier_id; u32 dax_id; u64 seg_id; /* Extended for elastic memory */
 #endif
 	u64 start, end;
@@ -263,7 +263,7 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 	start = ma->base_address;
 	end = start + ma->length;
 	pxm = ma->proximity_domain;
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	tier_id = ma->tier_id;
 	dax_id = ma->dax_id;
 	seg_id = ma->seg_id;
@@ -276,7 +276,7 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 		pr_err("SRAT: Too many proximity domains.\n");
 		goto out_err_bad_srat;
 	}
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	numa_record_physical_info(node, tier_id, dax_id);
 	if (numa_add_memblk_elas_mm(node, tier_id, dax_id, seg_id, start, end) < 0) {
 		pr_err("SRAT: Failed to add memblk to node %u [mem %#010Lx-%#010Lx]\n",
@@ -294,7 +294,7 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 
 	node_set(node, numa_nodes_parsed);
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	pr_info("SRAT: Node %u PXM %u Tier %u Dax %u Segment %llu [mem %#010Lx-%#010Lx]%s%s\n",
 		node, pxm, (unsigned int)tier_id, dax_id, seg_id,
 		(unsigned long long) start, (unsigned long long) end - 1,

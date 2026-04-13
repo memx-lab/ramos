@@ -2966,7 +2966,7 @@ static void task_numa_work(struct callback_head *work)
 			msecs_to_jiffies(sysctl_numa_balancing_scan_delay);
 	}
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	if (global_flag != mm->numa_local_rescan_flag) {
 		mm->numa_local_rescan_flag = global_flag;
 

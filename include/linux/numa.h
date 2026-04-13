@@ -13,7 +13,7 @@
 
 #define	NUMA_NO_NODE	(-1)
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 /*
  * The maximum number of vNUMA nodes should be larger than the
  * number of memory tiers. Currently we only consider two tiers,
@@ -22,7 +22,7 @@
  */
 #define MAX_NUM_VNUMA_NODE 2
 #define MAX_NODES_PER_VNODE (MAX_NUMNODES / MAX_NUM_VNUMA_NODE)
-#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_RAMOS_NUMA */
 
 /* optionally keep NUMA memory info available post init */
 #ifdef CONFIG_NUMA_KEEP_MEMINFO

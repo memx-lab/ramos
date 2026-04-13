@@ -1382,7 +1382,7 @@ typedef struct pglist_data {
 #ifdef CONFIG_NUMA
 	struct memory_tier __rcu *memtier;
 #endif
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	/* Physical information */
 	u16 tier_id;
 	u32 dax_id;
@@ -1394,7 +1394,7 @@ typedef struct pglist_data {
 } pg_data_t;
 
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 struct numa_phys_info {
 	u16 tier_id;
 	u32 dax_id;
@@ -1407,7 +1407,7 @@ struct vnuma_node_data {
 	nodemask_t all_nodes; /* Node mask of all nodes */
 	int node_ids[MAX_NUMNODES];
 };
-#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_RAMOS_NUMA */
 
 #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)
 #define node_spanned_pages(nid)	(NODE_DATA(nid)->node_spanned_pages)

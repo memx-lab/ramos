@@ -1878,7 +1878,7 @@ static int policy_node(gfp_t gfp, struct mempolicy *policy, int nd)
 	return nd;
 }
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 // TODO: the weight should be configurable by users
 static const u8 vnode_weights[MAX_NUM_VNUMA_NODE] = {5, 3};
 
@@ -1933,7 +1933,7 @@ static unsigned int vnuma_offset_il_node(int vnode_id, unsigned long offset)
 	int nid;
 
 	if (vnode_id >= MAX_NUM_VNUMA_NODE) {
-        printk_nvsl_error("Invalid vnode id %d\n", vnode_id);
+        printk_ramos_error("Invalid vnode id %d\n", vnode_id);
         return -EINVAL;
     }
 
@@ -1941,7 +1941,7 @@ static unsigned int vnuma_offset_il_node(int vnode_id, unsigned long offset)
 	nodemask = vnode_data->all_nodes;
 	nnodes = nodes_weight(nodemask);
 	if (!nnodes) {
-		printk_nvsl_error("vnode %d is empty\n", vnode_id);
+		printk_ramos_error("vnode %d is empty\n", vnode_id);
 		return numa_node_id();
 	}
 	target = (unsigned int)offset % nnodes;
@@ -1961,13 +1961,13 @@ static unsigned int vnuma_interleave_nodes(int vnode_id)
 	u32 node_idx, next_node_idx;
 
     if (vnode_id >= MAX_NUM_VNUMA_NODE) {
-        printk_nvsl_error("Invalid vnode id %d\n", vnode_id);
+        printk_ramos_error("Invalid vnode id %d\n", vnode_id);
         return -EINVAL;
     }
 
     vnode_data = VNUMA_NODE_DATA(vnode_id);
 	if (vnode_data->nr_nodes == 0) {
-		printk_nvsl_error("vnode %d has no nodes\n", vnode_id);
+		printk_ramos_error("vnode %d has no nodes\n", vnode_id);
         return -EINVAL;
 	}
 
@@ -2003,7 +2003,7 @@ static unsigned int vnuma_interleave_nid(int vnode_id,
 	} else
 		return vnuma_interleave_nodes(vnode_id);
 }
-#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_RAMOS_NUMA */
 
 /* Do dynamic interleaving for a process */
 static unsigned interleave_nodes(struct mempolicy *policy)
@@ -2360,12 +2360,12 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 		}
 	}
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	vnode_id = vnuma_weighted_interleave_vnodes();
 	preferred_nid = vnuma_interleave_nid(vnode_id, vma, addr, PAGE_SHIFT + order);
 	nmask = NULL;
 	if (preferred_nid < 0) {
-            printk_nvsl_debug("Cannot find preferred id for node %d, use default policy.\n", node);
+            printk_ramos_debug("Cannot find preferred id for node %d, use default policy.\n", node);
             nmask = policy_nodemask(gfp, pol);
             preferred_nid = policy_node(gfp, pol, node);
     }
@@ -2704,7 +2704,7 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 	unsigned long pgoff;
 	int polnid = NUMA_NO_NODE;
 	int ret = NUMA_NO_NODE;
-#ifndef CONFIG_NVSL_VNUMA
+#ifndef CONFIG_RAMOS_NUMA
 	struct zoneref *z;
 	int thiscpu = raw_smp_processor_id();
 	int thisnid = cpu_to_node(thiscpu);
@@ -2717,7 +2717,7 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 	if (!(pol->flags & MPOL_F_MOF))
 		goto out;
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 	// TODO: check weighted vnodes
 	vnode_id = 0;
 	pgoff = vma->vm_pgoff;
@@ -2783,7 +2783,7 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 out:
 	mpol_cond_put(pol);
 
-	//printk_nvsl_debug("pid %d, offset %ld, current id %d policy id: %d, ret %d\n",
+	//printk_ramos_debug("pid %d, offset %ld, current id %d policy id: %d, ret %d\n",
 	//	p->tgid, pgoff, curnid, polnid, ret);
 	return ret;
 }

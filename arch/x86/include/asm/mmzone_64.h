@@ -15,10 +15,10 @@ extern struct pglist_data *node_data[];
 #define NODE_DATA(nid)		(node_data[nid])
 
 
-#ifdef CONFIG_NVSL_VNUMA
+#ifdef CONFIG_RAMOS_NUMA
 extern struct vnuma_node_data vnuma_nodes[];
 #define VNUMA_NODE_DATA(vnode_id) (&vnuma_nodes[vnode_id])
-#endif /* CONFIG_NVSL_VNUMA */
+#endif /* CONFIG_RAMOS_NUMA */
 
 #endif /* CONFIG_NUMA */
 #endif /* _ASM_X86_MMZONE_64_H */
