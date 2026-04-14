@@ -14,8 +14,8 @@ extern struct pglist_data *node_data[];
 #define NODE_DATA(nid)	(node_data[nid])
 
 #ifdef CONFIG_RAMOS_NUMA
-extern struct vnuma_node_data vnuma_nodes[];
-#define VNUMA_NODE_DATA(vnode_id) (vnuma_nodes[vnode_id])
+extern struct s_numa_node_data s_numa_nodes[];
+#define S_NUMA_NODE_DATA(snode_id) (s_numa_nodes[snode_id])
 #endif /* CONFIG_RAMOS_NUMA */
 
 #endif /* CONFIG_NUMA */

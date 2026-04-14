@@ -1401,8 +1401,8 @@ struct numa_phys_info {
 	bool initialized;
 };
 
-/* vNUMA node contains nodes from the same memory tier */
-struct vnuma_node_data {
+/* S-NUMA node contains (C-NUMA) nodes from the same memory tier */
+struct s_numa_node_data {
 	int nr_nodes; /* Number of numa nodes */
 	nodemask_t all_nodes; /* Node mask of all nodes */
 	int node_ids[MAX_NUMNODES];

@@ -1250,8 +1250,8 @@ struct task_struct {
 	short				il_prev;
 	short				pref_node_fork;
 #ifdef CONFIG_RAMOS_NUMA
-	unsigned int	vnode_weight_cur;
-	u32				vnode_il_prev_nidx[MAX_NUM_VNUMA_NODE];
+	unsigned int	snode_weight_cur;
+	u32				snode_il_prev_nidx[MAX_NUM_SNUMA_NODE];
 #endif /* CONFIG_RAMOS_NUMA */
 #endif /* CONFIG_NUMA */
 #ifdef CONFIG_NUMA_BALANCING

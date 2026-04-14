@@ -1880,68 +1880,68 @@ static int policy_node(gfp_t gfp, struct mempolicy *policy, int nd)
 
 #ifdef CONFIG_RAMOS_NUMA
 // TODO: the weight should be configurable by users
-static const u8 vnode_weights[MAX_NUM_VNUMA_NODE] = {5, 3};
+static const u8 snode_weights[MAX_NUM_SNUMA_NODE] = {5, 3};
 
-static unsigned int vnuma_get_updated_weight_sum(void)
+static unsigned int snuma_get_updated_weight_sum(void)
 {
-    unsigned int vnode_weight_sum = 0;
+    unsigned int snode_weight_sum = 0;
 
-    for (int i = 0; i < MAX_NUM_VNUMA_NODE; i++) {
-        vnode_weight_sum += vnode_weights[i];
+    for (int i = 0; i < MAX_NUM_SNUMA_NODE; i++) {
+        snode_weight_sum += snode_weights[i];
     }
-    return vnode_weight_sum;
+    return snode_weight_sum;
 }
 
-static unsigned int vnuma_weighted_interleave_vnodes(void)
+static unsigned int snuma_weighted_interleave_snodes(void)
 {
     struct task_struct *me = current;
-    int slot = me->vnode_weight_cur;
-    unsigned int vnode_weight_sum = vnuma_get_updated_weight_sum();
+    int slot = me->snode_weight_cur;
+    unsigned int snode_weight_sum = snuma_get_updated_weight_sum();
     int acc = 0;
-	struct vnuma_node_data *vnode_data;
+	struct s_numa_node_data *snode_data;
 
-	// if one of vNUMA nodes is empty, we downgrade to vNUMA 0 interleaving
-	// since vNUMA 0 maintains CPU and thus always has nodes
-	// TODO: find vNUMA which has nodes if vNUMA 0 is empty
-	for (int vid = 0; vid < MAX_NUM_VNUMA_NODE; vid++) {
-		vnode_data = VNUMA_NODE_DATA(vid);
-		if (vnode_data->nr_nodes == 0) {
+	// if one of S-NUMA nodes is empty, we downgrade to S-NUMA 0 interleaving
+	// since S-NUMA 0 maintains CPU and thus always has nodes
+	// TODO: find S-NUMA which has nodes if S-NUMA 0 is empty
+	for (int vid = 0; vid < MAX_NUM_SNUMA_NODE; vid++) {
+		snode_data = S_NUMA_NODE_DATA(vid);
+		if (snode_data->nr_nodes == 0) {
 			return 0;
 		}
 	}
 
-    for (int vid = 0; vid < MAX_NUM_VNUMA_NODE; vid++) {
-        acc += vnode_weights[vid];
+    for (int vid = 0; vid < MAX_NUM_SNUMA_NODE; vid++) {
+        acc += snode_weights[vid];
         if (slot < acc) {
-            me->vnode_weight_cur = (slot + 1) % vnode_weight_sum;
+            me->snode_weight_cur = (slot + 1) % snode_weight_sum;
             return vid;
         }
     }
 
     WARN_ON_ONCE(1);
-    me->vnode_weight_cur = 0;
+    me->snode_weight_cur = 0;
     return 0;
 }
 
 /* Static interleaving for a VMA with know offset */
-static unsigned int vnuma_offset_il_node(int vnode_id, unsigned long offset)
+static unsigned int snuma_offset_il_node(int snode_id, unsigned long offset)
 {
-	struct vnuma_node_data *vnode_data;
+	struct s_numa_node_data *snode_data;
 	nodemask_t nodemask;
 	unsigned int target, nnodes;
 	int i;
 	int nid;
 
-	if (vnode_id >= MAX_NUM_VNUMA_NODE) {
-        printk_ramos_error("Invalid vnode id %d\n", vnode_id);
+	if (snode_id >= MAX_NUM_SNUMA_NODE) {
+        printk_ramos_error("Invalid vnode id %d\n", snode_id);
         return -EINVAL;
     }
 
-	vnode_data = VNUMA_NODE_DATA(vnode_id);
-	nodemask = vnode_data->all_nodes;
+	snode_data = S_NUMA_NODE_DATA(snode_id);
+	nodemask = snode_data->all_nodes;
 	nnodes = nodes_weight(nodemask);
 	if (!nnodes) {
-		printk_ramos_error("vnode %d is empty\n", vnode_id);
+		printk_ramos_error("vnode %d is empty\n", snode_id);
 		return numa_node_id();
 	}
 	target = (unsigned int)offset % nnodes;
@@ -1953,37 +1953,37 @@ static unsigned int vnuma_offset_il_node(int vnode_id, unsigned long offset)
 }
 
 /* Dynamic interleving for a process */
-static unsigned int vnuma_interleave_nodes(int vnode_id)
+static unsigned int snuma_interleave_nodes(int snode_id)
 {
     int node_id;
     struct task_struct *me = current;
-    struct vnuma_node_data *vnode_data;
+    struct s_numa_node_data *snode_data;
 	u32 node_idx, next_node_idx;
 
-    if (vnode_id >= MAX_NUM_VNUMA_NODE) {
-        printk_ramos_error("Invalid vnode id %d\n", vnode_id);
+    if (snode_id >= MAX_NUM_SNUMA_NODE) {
+        printk_ramos_error("Invalid vnode id %d\n", snode_id);
         return -EINVAL;
     }
 
-    vnode_data = VNUMA_NODE_DATA(vnode_id);
-	if (vnode_data->nr_nodes == 0) {
-		printk_ramos_error("vnode %d has no nodes\n", vnode_id);
+    snode_data = S_NUMA_NODE_DATA(snode_id);
+	if (snode_data->nr_nodes == 0) {
+		printk_ramos_error("vnode %d has no nodes\n", snode_id);
         return -EINVAL;
 	}
 
-	node_idx = me->vnode_il_prev_nidx[vnode_id];
-	node_id = vnode_data->node_ids[node_idx];
+	node_idx = me->snode_il_prev_nidx[snode_id];
+	node_id = snode_data->node_ids[node_idx];
 	/* Prepare next node for interleaving */
-	next_node_idx = me->vnode_il_prev_nidx[vnode_id] + 1;
-	if (next_node_idx >= vnode_data->nr_nodes) {
+	next_node_idx = me->snode_il_prev_nidx[snode_id] + 1;
+	if (next_node_idx >= snode_data->nr_nodes) {
 		next_node_idx = 0;
 	}
-	me->vnode_il_prev_nidx[vnode_id] = next_node_idx;
+	me->snode_il_prev_nidx[snode_id] = next_node_idx;
 
     return node_id;
 }
 
-static unsigned int vnuma_interleave_nid(int vnode_id,
+static unsigned int snuma_interleave_nid(int snode_id,
 		struct vm_area_struct *vma, unsigned long addr, int shift)
 {
 	if (vma) {
@@ -1999,9 +1999,9 @@ static unsigned int vnuma_interleave_nid(int vnode_id,
 		BUG_ON(shift < PAGE_SHIFT);
 		off = vma->vm_pgoff >> (shift - PAGE_SHIFT);
 		off += (addr - vma->vm_start) >> shift;
-		return vnuma_offset_il_node(vnode_id, off);
+		return snuma_offset_il_node(snode_id, off);
 	} else
-		return vnuma_interleave_nodes(vnode_id);
+		return snuma_interleave_nodes(snode_id);
 }
 #endif /* CONFIG_RAMOS_NUMA */
 
@@ -2288,7 +2288,10 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 	struct mempolicy *pol;
 	int node = numa_node_id();
 	struct folio *folio;
-	int preferred_nid, vnode_id;
+	int preferred_nid;
+#ifdef CONFIG_RAMOS_NUMA
+	int snode_id;
+#endif
 	nodemask_t *nmask;
 
 	pol = get_vma_policy(vma, addr);
@@ -2361,8 +2364,8 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 	}
 
 #ifdef CONFIG_RAMOS_NUMA
-	vnode_id = vnuma_weighted_interleave_vnodes();
-	preferred_nid = vnuma_interleave_nid(vnode_id, vma, addr, PAGE_SHIFT + order);
+	snode_id = snuma_weighted_interleave_snodes();
+	preferred_nid = snuma_interleave_nid(snode_id, vma, addr, PAGE_SHIFT + order);
 	nmask = NULL;
 	if (preferred_nid < 0) {
             printk_ramos_debug("Cannot find preferred id for node %d, use default policy.\n", node);
@@ -2709,7 +2712,7 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 	int thiscpu = raw_smp_processor_id();
 	int thisnid = cpu_to_node(thiscpu);
 #else
-	int vnode_id;
+	int snode_id;
 	//struct task_struct *p = current;
 #endif
 
@@ -2719,10 +2722,10 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 
 #ifdef CONFIG_RAMOS_NUMA
 	// TODO: check weighted vnodes
-	vnode_id = 0;
+	snode_id = 0;
 	pgoff = vma->vm_pgoff;
 	pgoff += (addr - vma->vm_start) >> PAGE_SHIFT;
-	polnid = vnuma_offset_il_node(vnode_id, pgoff);
+	polnid = snuma_offset_il_node(snode_id, pgoff);
 #else
 	switch (pol->mode) {
 	case MPOL_INTERLEAVE:

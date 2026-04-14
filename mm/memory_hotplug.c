@@ -1241,19 +1241,19 @@ static int __try_online_node(int nid, bool set_node_online)
 	if (set_node_online) {
 		node_set_online(nid);
 #ifdef CONFIG_RAMOS_NUMA
-		ret = numa_add_to_vnode(nid, pgdat->tier_id);
+		ret = numa_add_to_snode(nid, pgdat->tier_id);
 		if (ret < 0) {
-			printk_ramos_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
+			printk_ramos_error("Failed to build S-NUMA node for Node %u from Tier %u Dax %u\n",
 				nid, pgdat->tier_id, pgdat->dax_id);
 			// TODO: need to handle this failure node
-			// otherwise vNUMA will not allocate pages on this node
+			// otherwise S-NUMA will not allocate pages on this node
 		}
 		/* Force enabling NUMA balancing when hot-adding new nodes */
 		if (!(sysctl_numa_balancing_mode & NUMA_BALANCING_NORMAL)) {
 			set_numabalancing_state(true);
 		}
 #ifdef CONFIG_RAMOS_DEBUG
-		numa_dump_vnodes();
+		numa_dump_snodes();
 #endif
 #endif
 		ret = register_one_node(nid);
@@ -1419,19 +1419,19 @@ int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 		node_set_online(nid);
 #ifdef CONFIG_RAMOS_NUMA
 		pgdat = NODE_DATA(nid);
-		ret = numa_add_to_vnode(nid, pgdat->tier_id);
+		ret = numa_add_to_snode(nid, pgdat->tier_id);
 		if (ret < 0) {
-			printk_ramos_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n",
+			printk_ramos_error("Failed to build S-NUMA node for Node %u from Tier %u Dax %u\n",
 				nid, pgdat->tier_id, pgdat->dax_id);
 			// TODO: need to handle this failure node
-			// otherwise vNUMA will not allocate pages on this node
+			// otherwise S-NUMA will not allocate pages on this node
 		}
 		/* Force enabling NUMA balancing when hot-adding new nodes */
 		if (!(sysctl_numa_balancing_mode & NUMA_BALANCING_NORMAL)) {
 			set_numabalancing_state(true);
 		}
 #ifdef CONFIG_RAMOS_DEBUG
-		numa_dump_vnodes();
+		numa_dump_snodes();
 #endif
 #endif
 		ret = __register_one_node(nid);
@@ -2097,9 +2097,9 @@ void try_offline_node(int nid)
 	 */
 	node_set_offline(nid);
 #ifdef CONFIG_RAMOS_NUMA
-	numa_remove_from_vnode(nid);
+	numa_remove_from_snode(nid);
 #ifdef CONFIG_RAMOS_DEBUG
-	numa_dump_vnodes();
+	numa_dump_snodes();
 #endif
 #endif
 	unregister_one_node(nid);

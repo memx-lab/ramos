@@ -26,8 +26,8 @@ struct pglist_data *node_data[MAX_NUMNODES] __read_mostly;
 EXPORT_SYMBOL(node_data);
 
 #ifdef CONFIG_RAMOS_NUMA
-struct vnuma_node_data vnuma_nodes[MAX_NUM_VNUMA_NODE] __read_mostly;
-EXPORT_SYMBOL(vnuma_nodes);
+struct s_numa_node_data s_numa_nodes[MAX_NUM_SNUMA_NODE] __read_mostly;
+EXPORT_SYMBOL(s_numa_nodes);
 
 /* Used to trigger page re-distribution for hot-plug NUMA node */
 atomic_t numa_rescan_global_flag = ATOMIC_INIT(0);
@@ -737,56 +737,56 @@ void trigger_numa_rescan(void)
 			atomic_read(&numa_rescan_global_flag));
 }
 
-int numa_add_to_vnode(int nodeid, u16 tier_id)
+int numa_add_to_snode(int nodeid, u16 tier_id)
 {
-	int i, vnode_id;
-	struct vnuma_node_data *vnode_data;
+	int i, snode_id;
+	struct s_numa_node_data *snode_data;
 
-	if (tier_id >= MAX_NUM_VNUMA_NODE) {
+	if (tier_id >= MAX_NUM_SNUMA_NODE) {
 		printk_ramos_error("invalid tier id %u\n", tier_id);
 		return -EINVAL;
 	}
 
-	vnode_id = tier_id;
-	vnode_data = &vnuma_nodes[vnode_id];
+	snode_id = tier_id;
+	snode_data = &s_numa_nodes[snode_id];
 
 	/* Check duplicate */
-	for (i = 0; i < vnode_data->nr_nodes; i++) {
-		if (vnode_data->node_ids[i] == nodeid)
+	for (i = 0; i < snode_data->nr_nodes; i++) {
+		if (snode_data->node_ids[i] == nodeid)
 			return -EEXIST;
 	}
 
-	if (vnode_data->nr_nodes >= MAX_NODES_PER_VNODE) {
-		printk_ramos_error("too many nodes in vnode %d\n", vnode_id);
-		numa_dump_vnodes();
+	if (snode_data->nr_nodes >= MAX_NODES_PER_SNODE) {
+		printk_ramos_error("too many nodes in snode %d\n", snode_id);
+		numa_dump_snodes();
 		return -EINVAL;
 	}
 
-	vnode_data->node_ids[vnode_data->nr_nodes] = nodeid;
-	vnode_data->nr_nodes++;
-	node_set(nodeid, vnode_data->all_nodes);
+	snode_data->node_ids[snode_data->nr_nodes] = nodeid;
+	snode_data->nr_nodes++;
+	node_set(nodeid, snode_data->all_nodes);
 
 	return 0;
 }
 
-int numa_remove_from_vnode(int nodeid)
+int numa_remove_from_snode(int nodeid)
 {
 	int i, j, k;
-	struct vnuma_node_data *vnode_data;
+	struct s_numa_node_data *snode_data;
 
-	for (i = 0; i < MAX_NUM_VNUMA_NODE; i++) {
-		vnode_data = &vnuma_nodes[i];
+	for (i = 0; i < MAX_NUM_SNUMA_NODE; i++) {
+		snode_data = &s_numa_nodes[i];
 
-		for (j = 0; j < vnode_data->nr_nodes; j++) {
-			if (vnode_data->node_ids[j] == nodeid) {
+		for (j = 0; j < snode_data->nr_nodes; j++) {
+			if (snode_data->node_ids[j] == nodeid) {
 				/* Shift remaining entries */
-				for (k = j; k < vnode_data->nr_nodes - 1; k++) {
-					vnode_data->node_ids[k] = vnode_data->node_ids[k + 1];
+				for (k = j; k < snode_data->nr_nodes - 1; k++) {
+					snode_data->node_ids[k] = snode_data->node_ids[k + 1];
 				}
-				vnode_data->nr_nodes--;
-				node_clear(nodeid, vnode_data->all_nodes);
+				snode_data->nr_nodes--;
+				node_clear(nodeid, snode_data->all_nodes);
 
-				printk_ramos_info("Removed node %d from vnode (tier) %d\n", nodeid, i);
+				printk_ramos_info("Removed node %d from snode (tier) %d\n", nodeid, i);
 				return 0;
 			}
 		}
@@ -796,7 +796,7 @@ int numa_remove_from_vnode(int nodeid)
 	return -ENOENT;
 }
 
-static int __init numa_construct_vnodes(void)
+static int __init numa_construct_snodes(void)
 {
 	int ret, nodeid;
 	pg_data_t *pgdat;
@@ -804,28 +804,28 @@ static int __init numa_construct_vnodes(void)
 	for_each_online_node(nodeid) {
 		pgdat = NODE_DATA(nodeid);
 
-		ret = numa_add_to_vnode(nodeid, pgdat->tier_id);
+		ret = numa_add_to_snode(nodeid, pgdat->tier_id);
 		if (ret < 0) {
-			printk_ramos_error("Failed to build vNUMA node for Node %u from Tier %u Dax %u\n", nodeid, pgdat->tier_id, pgdat->dax_id);
+			printk_ramos_error("Failed to build S-NUMA node for Node %u from Tier %u Dax %u\n", nodeid, pgdat->tier_id, pgdat->dax_id);
 			return ret;
 		}
 	}
 	return 0;
 }
 
-void numa_dump_vnodes(void)
+void numa_dump_snodes(void)
 {
-	int vnode_idx, node_idx;
-	struct vnuma_node_data *vnode_data;
+	int snode_idx, node_idx;
+	struct s_numa_node_data *snode_data;
 
 	printk_ramos_info("Dump NUMA nodes:\n");
-	printk_ramos_info("Total S-NUMA nodes: %u\n", MAX_NUM_VNUMA_NODE);
+	printk_ramos_info("Total S-NUMA nodes: %u\n", MAX_NUM_SNUMA_NODE);
 
-	for (vnode_idx = 0; vnode_idx < MAX_NUM_VNUMA_NODE; vnode_idx++) {
-		vnode_data = &vnuma_nodes[vnode_idx];
-		printk_ramos_info("  S-NUMA node %u:\n", vnode_idx);
-		for (node_idx = 0; node_idx < vnode_data->nr_nodes; node_idx++) {
-			printk_ramos_info("    C-NUMA %u", vnode_data->node_ids[node_idx]);
+	for (snode_idx = 0; snode_idx < MAX_NUM_SNUMA_NODE; snode_idx++) {
+		snode_data = &s_numa_nodes[snode_idx];
+		printk_ramos_info("  S-NUMA node %u:\n", snode_idx);
+		for (node_idx = 0; node_idx < snode_data->nr_nodes; node_idx++) {
+			printk_ramos_info("    C-NUMA %u", snode_data->node_ids[node_idx]);
 		}
 		printk_ramos_info("\n");
 	}
@@ -897,11 +897,11 @@ static int __init numa_init(int (*init_func)(void))
 		return ret;
 
 #ifdef CONFIG_RAMOS_NUMA
-	ret = numa_construct_vnodes();
+	ret = numa_construct_snodes();
 	if (ret < 0)
 		return ret;
 #ifdef CONFIG_RAMOS_DEBUG
-	numa_dump_vnodes();
+	numa_dump_snodes();
 #endif
 #endif
 
@@ -950,7 +950,7 @@ static int __init dummy_numa_init(void)
 void __init x86_numa_init(void)
 {
 #ifdef CONFIG_RAMOS_NUMA
-	printk_ramos_info("vNUMA feature is enabled\n");
+	printk_ramos_info("RAMOS S/C-NUMA abstractions are enabled\n");
 #endif
 
 	if (!numa_off) {
