@@ -1950,6 +1950,61 @@ static unsigned int snuma_build_effective_weights(unsigned int *weights)
 	return sum;
 }
 
+static unsigned int snuma_pick_snode_weighted_slot(
+		const unsigned int *weights, unsigned int slot)
+{
+	unsigned int nr_snodes;
+	unsigned int acc = 0;
+	int sid;
+
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
+	for (sid = 0; sid < nr_snodes; sid++) {
+		if (!weights[sid])
+			continue;
+		acc += weights[sid];
+		if (acc > slot) {
+			return sid;
+		}
+	}
+
+	WARN_ON_ONCE(1);
+	return snuma_first_eligible_snode();
+}
+
+static unsigned int snuma_pick_snode_weighted_round_robin(void)
+{
+	struct task_struct *me = current;
+	unsigned int weights[MAX_NUM_SNUMA_NODE];
+	unsigned int weight_sum, slot;
+
+	weight_sum = snuma_build_effective_weights(weights);
+	if (!weight_sum)
+		return snuma_first_eligible_snode();
+
+	slot = me->snode_weight_cur % weight_sum;
+	me->snode_weight_cur = (slot + 1) % weight_sum;
+
+	return snuma_pick_snode_weighted_slot(weights, slot);
+}
+
+/*
+ * Pick S-NUMA node by virtual offset using current effective weights.
+ * This keeps rebalance target deterministic for an address while still
+ * adapting when channel count/weights change.
+ */
+static unsigned int snuma_pick_snode_weighted_by_offset(unsigned long offset)
+{
+	unsigned int weights[MAX_NUM_SNUMA_NODE];
+	unsigned int weight_sum, slot;
+
+	weight_sum = snuma_build_effective_weights(weights);
+	if (!weight_sum)
+		return snuma_first_eligible_snode();
+
+	slot = (unsigned int)(offset % weight_sum);
+	return snuma_pick_snode_weighted_slot(weights, slot);
+}
+
 /*
  * Channel-weighted interleaving:
  * 1) Adaptive mode:
@@ -1957,33 +2012,19 @@ static unsigned int snuma_build_effective_weights(unsigned int *weights)
  * 2) Manual override mode:
  *    weight = snode_manual_weight
  */
-static unsigned int snuma_weighted_interleave_snodes(void)
+static unsigned int snuma_pick_snode(struct vm_area_struct *vma,
+		unsigned long addr, int shift)
 {
-	struct task_struct *me = current;
-	unsigned int weights[MAX_NUM_SNUMA_NODE];
-	unsigned int nr_snodes;
-	unsigned int snode_weight_sum, slot, acc = 0;
-	int sid;
+	if (vma) {
+		unsigned long off;
 
-	snode_weight_sum = snuma_build_effective_weights(weights);
-	if (!snode_weight_sum)
-		return snuma_first_eligible_snode();
-
-	nr_snodes = READ_ONCE(nr_snuma_nodes);
-	slot = me->snode_weight_cur % snode_weight_sum;
-	for (sid = 0; sid < nr_snodes; sid++) {
-		if (!weights[sid])
-			continue;
-		acc += weights[sid];
-		if (acc > slot) {
-			me->snode_weight_cur = (slot + 1) % snode_weight_sum;
-			return sid;
-		}
+		BUG_ON(shift < PAGE_SHIFT);
+		off = vma->vm_pgoff >> (shift - PAGE_SHIFT);
+		off += (addr - vma->vm_start) >> shift;
+		return snuma_pick_snode_weighted_by_offset(off);
 	}
 
-	WARN_ON_ONCE(1);
-	me->snode_weight_cur = 0;
-	return snuma_first_eligible_snode();
+	return snuma_pick_snode_weighted_round_robin();
 }
 
 /* Static interleaving for a VMA with know offset */
@@ -2669,7 +2710,7 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 	}
 
 #ifdef CONFIG_RAMOS_NUMA
-	snode_id = snuma_weighted_interleave_snodes();
+	snode_id = snuma_pick_snode(vma, addr, PAGE_SHIFT + order);
 	preferred_nid = snuma_interleave_nid(snode_id, vma, addr, PAGE_SHIFT + order);
 	nmask = NULL;
 	if (preferred_nid < 0) {
@@ -3026,10 +3067,9 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 		goto out;
 
 #ifdef CONFIG_RAMOS_NUMA
-	// TODO: check weighted vnodes
-	snode_id = 0;
 	pgoff = vma->vm_pgoff;
 	pgoff += (addr - vma->vm_start) >> PAGE_SHIFT;
+	snode_id = snuma_pick_snode(vma, addr, PAGE_SHIFT);
 	polnid = snuma_offset_il_node(snode_id, pgoff);
 #else
 	switch (pol->mode) {
