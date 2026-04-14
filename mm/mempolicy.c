@@ -102,6 +102,8 @@
 #include <linux/mmu_notifier.h>
 #include <linux/printk.h>
 #include <linux/swapops.h>
+#include <linux/kobject.h>
+#include <linux/sysfs.h>
 
 #include <asm/tlbflush.h>
 #include <asm/tlb.h>
@@ -1879,48 +1881,118 @@ static int policy_node(gfp_t gfp, struct mempolicy *policy, int nd)
 }
 
 #ifdef CONFIG_RAMOS_NUMA
-// TODO: the weight should be configurable by users
-static const u8 snode_weights[MAX_NUM_SNUMA_NODE] = {5, 3};
+static unsigned int snode_bw_gbs[MAX_NUM_SNUMA_NODE] = {
+	[0 ... MAX_NUM_SNUMA_NODE - 1] = 1,
+};
+static unsigned int snode_manual_weight[MAX_NUM_SNUMA_NODE] = {
+	[0 ... MAX_NUM_SNUMA_NODE - 1] = 1,
+};
+static bool snode_weight_override_enable;
 
-static unsigned int snuma_get_updated_weight_sum(void)
+static unsigned int snuma_weight_gcd(unsigned int a, unsigned int b)
 {
-    unsigned int snode_weight_sum = 0;
+	while (b) {
+		unsigned int t = a % b;
 
-    for (int i = 0; i < MAX_NUM_SNUMA_NODE; i++) {
-        snode_weight_sum += snode_weights[i];
-    }
-    return snode_weight_sum;
+		a = b;
+		b = t;
+	}
+	return a;
 }
 
-static unsigned int snuma_weighted_interleave_snodes(void)
+static int snuma_first_eligible_snode(void)
 {
-    struct task_struct *me = current;
-    int slot = me->snode_weight_cur;
-    unsigned int snode_weight_sum = snuma_get_updated_weight_sum();
-    int acc = 0;
+	int sid;
 	struct s_numa_node_data *snode_data;
 
-	// if one of S-NUMA nodes is empty, we downgrade to S-NUMA 0 interleaving
-	// since S-NUMA 0 maintains CPU and thus always has nodes
-	// TODO: find S-NUMA which has nodes if S-NUMA 0 is empty
-	for (int vid = 0; vid < MAX_NUM_SNUMA_NODE; vid++) {
-		snode_data = S_NUMA_NODE_DATA(vid);
-		if (snode_data->nr_nodes == 0) {
-			return 0;
+	for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+		snode_data = S_NUMA_NODE_DATA(sid);
+		if (snode_data->nr_nodes > 0)
+			return sid;
+	}
+
+	return 0;
+}
+
+static unsigned int snuma_build_effective_weights(unsigned int *weights)
+{
+	int sid;
+	unsigned int gcd = 0;
+	unsigned int sum = 0;
+	bool override = READ_ONCE(snode_weight_override_enable);
+	struct s_numa_node_data *snode_data;
+	unsigned int w = 0;
+
+	for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+		snode_data = S_NUMA_NODE_DATA(sid);
+		w = 0;
+
+		if (snode_data->nr_nodes <= 0) {
+			weights[sid] = 0;
+			continue;
+		}
+
+		if (override) {
+			w = READ_ONCE(snode_manual_weight[sid]);
+		} else {
+			unsigned int bw_gbs = READ_ONCE(snode_bw_gbs[sid]);
+
+			w = bw_gbs * snode_data->nr_nodes;
+		}
+		weights[sid] = w;
+
+		if (w) {
+			gcd = gcd ? snuma_weight_gcd(gcd, w) : w;
+			sum += w;
 		}
 	}
 
-    for (int vid = 0; vid < MAX_NUM_SNUMA_NODE; vid++) {
-        acc += snode_weights[vid];
-        if (slot < acc) {
-            me->snode_weight_cur = (slot + 1) % snode_weight_sum;
-            return vid;
-        }
-    }
+	if (!sum)
+		return 0;
 
-    WARN_ON_ONCE(1);
-    me->snode_weight_cur = 0;
-    return 0;
+	if (gcd > 1) {
+		sum = 0;
+		for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+			weights[sid] /= gcd;
+			sum += weights[sid];
+		}
+	}
+
+	return sum;
+}
+
+/*
+ * Channel-weighted interleaving:
+ * 1) Adaptive mode:
+ *    weight = snode_bw_gbs * nr_channels
+ * 2) Manual override mode:
+ *    weight = snode_manual_weight
+ */
+static unsigned int snuma_weighted_interleave_snodes(void)
+{
+	struct task_struct *me = current;
+	unsigned int weights[MAX_NUM_SNUMA_NODE];
+	unsigned int snode_weight_sum, slot, acc = 0;
+	int sid;
+
+	snode_weight_sum = snuma_build_effective_weights(weights);
+	if (!snode_weight_sum)
+		return snuma_first_eligible_snode();
+
+	slot = me->snode_weight_cur % snode_weight_sum;
+	for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+		if (!weights[sid])
+			continue;
+		acc += weights[sid];
+		if (acc > slot) {
+			me->snode_weight_cur = (slot + 1) % snode_weight_sum;
+			return sid;
+		}
+	}
+
+	WARN_ON_ONCE(1);
+	me->snode_weight_cur = 0;
+	return snuma_first_eligible_snode();
 }
 
 /* Static interleaving for a VMA with know offset */
@@ -2003,6 +2075,232 @@ static unsigned int snuma_interleave_nid(int snode_id,
 	} else
 		return snuma_interleave_nodes(snode_id);
 }
+
+#ifdef CONFIG_SYSFS
+static struct kobject *ramos_numa_kobj;
+static struct kobject *ramos_numa_snode_kobj;
+
+struct ramos_snode_kobj {
+	struct kobject kobj;
+	unsigned int snode_id;
+};
+
+static struct ramos_snode_kobj *ramos_snode_kobjs[MAX_NUM_SNUMA_NODE];
+
+static inline struct ramos_snode_kobj *to_ramos_snode_kobj(struct kobject *kobj)
+{
+	return container_of(kobj, struct ramos_snode_kobj, kobj);
+}
+
+static void ramos_snode_release(struct kobject *kobj)
+{
+	kfree(to_ramos_snode_kobj(kobj));
+}
+
+static ssize_t weight_override_enable_show(struct kobject *kobj,
+					   struct kobj_attribute *attr,
+					   char *buf)
+{
+	return sysfs_emit(buf, "%u\n",
+			  READ_ONCE(snode_weight_override_enable) ? 1 : 0);
+}
+
+static ssize_t weight_override_enable_store(struct kobject *kobj,
+					    struct kobj_attribute *attr,
+					    const char *buf, size_t count)
+{
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	WRITE_ONCE(snode_weight_override_enable, enable);
+	return count;
+}
+
+static ssize_t weights_summary_show(struct kobject *kobj,
+				    struct kobj_attribute *attr, char *buf)
+{
+	unsigned int weights[MAX_NUM_SNUMA_NODE];
+	unsigned int sum;
+	unsigned int i;
+	ssize_t len = 0;
+
+	sum = snuma_build_effective_weights(weights);
+	len += scnprintf(buf + len, PAGE_SIZE - len, "mode=%s sum=%u\n",
+			 READ_ONCE(snode_weight_override_enable) ?
+			 "manual_override" : "adaptive_bw_x_channels",
+			 sum);
+
+	for (i = 0; i < MAX_NUM_SNUMA_NODE && len < PAGE_SIZE; i++) {
+		struct s_numa_node_data *snode_data = S_NUMA_NODE_DATA(i);
+
+		len += scnprintf(buf + len, PAGE_SIZE - len,
+				 "snode=%u channels=%d bw_GBs=%u manual_weight=%u effective_weight=%u\n",
+				 i, snode_data->nr_nodes,
+				 READ_ONCE(snode_bw_gbs[i]),
+				 READ_ONCE(snode_manual_weight[i]),
+				 weights[i]);
+	}
+
+	return len;
+}
+
+static struct kobj_attribute weight_override_enable_attr =
+	__ATTR(weight_override_enable, 0644,
+	       weight_override_enable_show, weight_override_enable_store);
+static struct kobj_attribute weights_summary_attr =
+	__ATTR_RO(weights_summary);
+
+static ssize_t snode_bw_GBs_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	struct ramos_snode_kobj *snode_kobj = to_ramos_snode_kobj(kobj);
+	unsigned int sid = snode_kobj->snode_id;
+
+	return sysfs_emit(buf, "%u\n", READ_ONCE(snode_bw_gbs[sid]));
+}
+
+static ssize_t snode_bw_GBs_store(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct ramos_snode_kobj *snode_kobj = to_ramos_snode_kobj(kobj);
+	unsigned int sid = snode_kobj->snode_id;
+	unsigned int val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	WRITE_ONCE(snode_bw_gbs[sid], val);
+	return count;
+}
+
+static ssize_t snode_weight_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	struct ramos_snode_kobj *snode_kobj = to_ramos_snode_kobj(kobj);
+	unsigned int sid = snode_kobj->snode_id;
+
+	return sysfs_emit(buf, "%u\n", READ_ONCE(snode_manual_weight[sid]));
+}
+
+static ssize_t snode_weight_store(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct ramos_snode_kobj *snode_kobj = to_ramos_snode_kobj(kobj);
+	unsigned int sid = snode_kobj->snode_id;
+	unsigned int val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	WRITE_ONCE(snode_manual_weight[sid], val);
+	return count;
+}
+
+static struct kobj_attribute snode_bw_GBs_attr =
+	__ATTR(bw_GBs, 0644, snode_bw_GBs_show, snode_bw_GBs_store);
+static struct kobj_attribute snode_weight_attr =
+	__ATTR(weight, 0644, snode_weight_show, snode_weight_store);
+
+static struct attribute *ramos_numa_attrs[] = {
+	&weight_override_enable_attr.attr,
+	&weights_summary_attr.attr,
+	NULL,
+};
+
+static struct attribute *ramos_snode_attrs[] = {
+	&snode_bw_GBs_attr.attr,
+	&snode_weight_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group ramos_numa_attr_group = {
+	.attrs = ramos_numa_attrs,
+};
+static const struct attribute_group ramos_snode_attr_group = {
+	.attrs = ramos_snode_attrs,
+};
+
+static const struct attribute_group *ramos_snode_attr_groups[] = {
+	&ramos_snode_attr_group,
+	NULL,
+};
+
+static const struct kobj_type ramos_snode_ktype = {
+	.release = ramos_snode_release,
+	.sysfs_ops = &kobj_sysfs_ops,
+	.default_groups = ramos_snode_attr_groups,
+};
+
+static int __init ramos_numa_sysfs_init(void)
+{
+	int err;
+	unsigned int sid;
+
+	ramos_numa_kobj = kobject_create_and_add("ramos_numa", mm_kobj);
+	if (!ramos_numa_kobj) {
+		pr_err("failed to create ramos_numa kobject\n");
+		return -ENOMEM;
+	}
+
+	err = sysfs_create_group(ramos_numa_kobj, &ramos_numa_attr_group);
+	if (err) {
+		pr_err("failed to register ramos_numa sysfs group\n");
+		kobject_put(ramos_numa_kobj);
+		ramos_numa_kobj = NULL;
+		return err;
+	}
+
+	ramos_numa_snode_kobj = kobject_create_and_add("snode", ramos_numa_kobj);
+	if (!ramos_numa_snode_kobj) {
+		pr_err("failed to create ramos_numa/snode kobject\n");
+		kobject_put(ramos_numa_kobj);
+		ramos_numa_kobj = NULL;
+		return -ENOMEM;
+	}
+
+	for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+		struct ramos_snode_kobj *snode_kobj;
+
+		snode_kobj = kzalloc(sizeof(*snode_kobj), GFP_KERNEL);
+		if (!snode_kobj)
+			goto err_put_snodes;
+
+		snode_kobj->snode_id = sid;
+		kobject_init(&snode_kobj->kobj, &ramos_snode_ktype);
+		err = kobject_add(&snode_kobj->kobj, ramos_numa_snode_kobj, "%u",
+				  sid);
+		if (err) {
+			kobject_put(&snode_kobj->kobj);
+			goto err_put_snodes;
+		}
+		ramos_snode_kobjs[sid] = snode_kobj;
+	}
+
+	return 0;
+
+err_put_snodes:
+	while (sid-- > 0) {
+		kobject_put(&ramos_snode_kobjs[sid]->kobj);
+		ramos_snode_kobjs[sid] = NULL;
+	}
+	kobject_put(ramos_numa_snode_kobj);
+	ramos_numa_snode_kobj = NULL;
+	kobject_put(ramos_numa_kobj);
+	ramos_numa_kobj = NULL;
+	return err ? err : -ENOMEM;
+}
+subsys_initcall(ramos_numa_sysfs_init);
+#endif /* CONFIG_SYSFS */
 #endif /* CONFIG_RAMOS_NUMA */
 
 /* Do dynamic interleaving for a process */
