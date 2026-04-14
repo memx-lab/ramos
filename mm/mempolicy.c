@@ -1902,35 +1902,24 @@ static unsigned int snuma_weight_gcd(unsigned int a, unsigned int b)
 
 static int snuma_first_eligible_snode(void)
 {
-	int sid;
-	struct s_numa_node_data *snode_data;
-
-	for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
-		snode_data = S_NUMA_NODE_DATA(sid);
-		if (snode_data->nr_nodes > 0)
-			return sid;
-	}
-
+	/* S-NUMA node 0 is always valid */
 	return 0;
 }
 
 static unsigned int snuma_build_effective_weights(unsigned int *weights)
 {
 	int sid;
+	unsigned int nr_snodes;
 	unsigned int gcd = 0;
 	unsigned int sum = 0;
 	bool override = READ_ONCE(snode_weight_override_enable);
 	struct s_numa_node_data *snode_data;
 	unsigned int w = 0;
 
-	for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
+	for (sid = 0; sid < nr_snodes; sid++) {
 		snode_data = S_NUMA_NODE_DATA(sid);
 		w = 0;
-
-		if (snode_data->nr_nodes <= 0) {
-			weights[sid] = 0;
-			continue;
-		}
 
 		if (override) {
 			w = READ_ONCE(snode_manual_weight[sid]);
@@ -1952,7 +1941,7 @@ static unsigned int snuma_build_effective_weights(unsigned int *weights)
 
 	if (gcd > 1) {
 		sum = 0;
-		for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+		for (sid = 0; sid < nr_snodes; sid++) {
 			weights[sid] /= gcd;
 			sum += weights[sid];
 		}
@@ -1972,6 +1961,7 @@ static unsigned int snuma_weighted_interleave_snodes(void)
 {
 	struct task_struct *me = current;
 	unsigned int weights[MAX_NUM_SNUMA_NODE];
+	unsigned int nr_snodes;
 	unsigned int snode_weight_sum, slot, acc = 0;
 	int sid;
 
@@ -1979,8 +1969,9 @@ static unsigned int snuma_weighted_interleave_snodes(void)
 	if (!snode_weight_sum)
 		return snuma_first_eligible_snode();
 
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
 	slot = me->snode_weight_cur % snode_weight_sum;
-	for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+	for (sid = 0; sid < nr_snodes; sid++) {
 		if (!weights[sid])
 			continue;
 		acc += weights[sid];
@@ -2001,10 +1992,12 @@ static unsigned int snuma_offset_il_node(int snode_id, unsigned long offset)
 	struct s_numa_node_data *snode_data;
 	nodemask_t nodemask;
 	unsigned int target, nnodes;
+	unsigned int nr_snodes;
 	int i;
 	int nid;
 
-	if (snode_id >= MAX_NUM_SNUMA_NODE) {
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
+	if (!nr_snodes || snode_id >= nr_snodes) {
         printk_ramos_error("Invalid vnode id %d\n", snode_id);
         return -EINVAL;
     }
@@ -2030,20 +2023,28 @@ static unsigned int snuma_interleave_nodes(int snode_id)
     int node_id;
     struct task_struct *me = current;
     struct s_numa_node_data *snode_data;
+	unsigned int nr_snodes;
 	u32 node_idx, next_node_idx;
 
-    if (snode_id >= MAX_NUM_SNUMA_NODE) {
-        printk_ramos_error("Invalid vnode id %d\n", snode_id);
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
+    if (!nr_snodes || snode_id >= nr_snodes) {
+        printk_ramos_error("Invalid snode id %d\n", snode_id);
         return -EINVAL;
     }
 
     snode_data = S_NUMA_NODE_DATA(snode_id);
 	if (snode_data->nr_nodes == 0) {
-		printk_ramos_error("vnode %d has no nodes\n", snode_id);
+		printk_ramos_error("snode %d has no nodes\n", snode_id);
         return -EINVAL;
 	}
 
 	node_idx = me->snode_il_prev_nidx[snode_id];
+	/*
+	 * Task-local history can be stale if nodes were hot-removed or the
+	 * S-NUMA layout changed. Clamp it to keep array access in range.
+	 */
+	if (node_idx >= snode_data->nr_nodes)
+		node_idx = 0;
 	node_id = snode_data->node_ids[node_idx];
 	/* Prepare next node for interleaving */
 	next_node_idx = me->snode_il_prev_nidx[snode_id] + 1;
@@ -2125,21 +2126,25 @@ static ssize_t weights_summary_show(struct kobject *kobj,
 {
 	unsigned int weights[MAX_NUM_SNUMA_NODE];
 	unsigned int sum;
+	unsigned int nr_snodes;
 	unsigned int i;
 	ssize_t len = 0;
 
 	sum = snuma_build_effective_weights(weights);
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
 	len += scnprintf(buf + len, PAGE_SIZE - len, "mode=%s sum=%u\n",
 			 READ_ONCE(snode_weight_override_enable) ?
 			 "manual_override" : "adaptive_bw_x_channels",
 			 sum);
+	len += scnprintf(buf + len, PAGE_SIZE - len, "active_snodes=%u\n",
+			 nr_snodes);
 
-	for (i = 0; i < MAX_NUM_SNUMA_NODE && len < PAGE_SIZE; i++) {
+	for (i = 0; i < nr_snodes && len < PAGE_SIZE; i++) {
 		struct s_numa_node_data *snode_data = S_NUMA_NODE_DATA(i);
 
 		len += scnprintf(buf + len, PAGE_SIZE - len,
-				 "snode=%u channels=%d bw_GBs=%u manual_weight=%u effective_weight=%u\n",
-				 i, snode_data->nr_nodes,
+				 "snode=%u tier=%u channels=%d bw_GBs=%u manual_weight=%u effective_weight=%u\n",
+				 i, snode_data->tier_id, snode_data->nr_nodes,
 				 READ_ONCE(snode_bw_gbs[i]),
 				 READ_ONCE(snode_manual_weight[i]),
 				 weights[i]);
@@ -2244,6 +2249,7 @@ static const struct kobj_type ramos_snode_ktype = {
 static int __init ramos_numa_sysfs_init(void)
 {
 	int err;
+	unsigned int nr_snodes;
 	unsigned int sid;
 
 	ramos_numa_kobj = kobject_create_and_add("ramos_numa", mm_kobj);
@@ -2268,7 +2274,8 @@ static int __init ramos_numa_sysfs_init(void)
 		return -ENOMEM;
 	}
 
-	for (sid = 0; sid < MAX_NUM_SNUMA_NODE; sid++) {
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
+	for (sid = 0; sid < nr_snodes; sid++) {
 		struct ramos_snode_kobj *snode_kobj;
 
 		snode_kobj = kzalloc(sizeof(*snode_kobj), GFP_KERNEL);

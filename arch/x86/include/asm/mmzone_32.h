@@ -15,6 +15,7 @@ extern struct pglist_data *node_data[];
 
 #ifdef CONFIG_RAMOS_NUMA
 extern struct s_numa_node_data s_numa_nodes[];
+extern unsigned int nr_snuma_nodes;
 #define S_NUMA_NODE_DATA(snode_id) (s_numa_nodes[snode_id])
 #endif /* CONFIG_RAMOS_NUMA */
 

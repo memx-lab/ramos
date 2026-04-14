@@ -26,8 +26,15 @@ struct pglist_data *node_data[MAX_NUMNODES] __read_mostly;
 EXPORT_SYMBOL(node_data);
 
 #ifdef CONFIG_RAMOS_NUMA
+/*
+ * S-NUMA ID is the current index in this compact array.
+ * When an S-NUMA node becomes empty and is removed, later entries
+ * are shifted left, so S-NUMA IDs are not stable across hotplug events.
+ */
 struct s_numa_node_data s_numa_nodes[MAX_NUM_SNUMA_NODE] __read_mostly;
 EXPORT_SYMBOL(s_numa_nodes);
+unsigned int nr_snuma_nodes __read_mostly;
+EXPORT_SYMBOL(nr_snuma_nodes);
 
 /* Used to trigger page re-distribution for hot-plug NUMA node */
 atomic_t numa_rescan_global_flag = ATOMIC_INIT(0);
@@ -739,15 +746,30 @@ void trigger_numa_rescan(void)
 
 int numa_add_to_snode(int nodeid, u16 tier_id)
 {
-	int i, snode_id;
+	int i, snode_id = -1;
 	struct s_numa_node_data *snode_data;
 
-	if (tier_id >= MAX_NUM_SNUMA_NODE) {
-		printk_ramos_error("invalid tier id %u\n", tier_id);
-		return -EINVAL;
+	/* Find an existing S-NUMA node with the same tier id. */
+	for (i = 0; i < nr_snuma_nodes; i++) {
+		if (s_numa_nodes[i].tier_id == tier_id) {
+			snode_id = i;
+			break;
+		}
 	}
 
-	snode_id = tier_id;
+	/* No existing S-NUMA for this tier: allocate a new compact slot. */
+	if (snode_id < 0) {
+		if (nr_snuma_nodes >= MAX_NUM_SNUMA_NODE) {
+			printk_ramos_error("Cannot construct S-NUMA node for tier %u\n", tier_id);
+			numa_dump_snodes();
+			return -EINVAL;
+		}
+		snode_id = nr_snuma_nodes++;
+		snode_data = &s_numa_nodes[snode_id];
+		memset(snode_data, 0, sizeof(*snode_data));
+		snode_data->tier_id = tier_id;
+	}
+
 	snode_data = &s_numa_nodes[snode_id];
 
 	/* Check duplicate */
@@ -774,7 +796,7 @@ int numa_remove_from_snode(int nodeid)
 	int i, j, k;
 	struct s_numa_node_data *snode_data;
 
-	for (i = 0; i < MAX_NUM_SNUMA_NODE; i++) {
+	for (i = 0; i < nr_snuma_nodes; i++) {
 		snode_data = &s_numa_nodes[i];
 
 		for (j = 0; j < snode_data->nr_nodes; j++) {
@@ -785,6 +807,16 @@ int numa_remove_from_snode(int nodeid)
 				}
 				snode_data->nr_nodes--;
 				node_clear(nodeid, snode_data->all_nodes);
+				snode_data->node_ids[snode_data->nr_nodes] = 0;
+
+				/* Keep s_numa_nodes compact: shift remaining entries */
+				if (snode_data->nr_nodes == 0) {
+					for (k = i; k < nr_snuma_nodes - 1; k++)
+						s_numa_nodes[k] = s_numa_nodes[k + 1];
+					memset(&s_numa_nodes[nr_snuma_nodes - 1], 0,
+					       sizeof(s_numa_nodes[0]));
+					nr_snuma_nodes--;
+				}
 
 				printk_ramos_info("Removed node %d from snode (tier) %d\n", nodeid, i);
 				return 0;
@@ -819,13 +851,14 @@ void numa_dump_snodes(void)
 	struct s_numa_node_data *snode_data;
 
 	printk_ramos_info("Dump NUMA nodes:\n");
-	printk_ramos_info("Total S-NUMA nodes: %u\n", MAX_NUM_SNUMA_NODE);
+	printk_ramos_info("Total S-NUMA nodes: %u\n", nr_snuma_nodes);
 
-	for (snode_idx = 0; snode_idx < MAX_NUM_SNUMA_NODE; snode_idx++) {
+	for (snode_idx = 0; snode_idx < nr_snuma_nodes; snode_idx++) {
 		snode_data = &s_numa_nodes[snode_idx];
-		printk_ramos_info("  S-NUMA node %u:\n", snode_idx);
+		printk_ramos_info("  S-NUMA node %u (tier %u):\n",
+				  snode_idx, snode_data->tier_id);
 		for (node_idx = 0; node_idx < snode_data->nr_nodes; node_idx++) {
-			printk_ramos_info("    C-NUMA %u", snode_data->node_ids[node_idx]);
+			printk_ramos_info("    C-NUMA node %u", snode_data->node_ids[node_idx]);
 		}
 		printk_ramos_info("\n");
 	}

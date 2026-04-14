@@ -1403,6 +1403,7 @@ struct numa_phys_info {
 
 /* S-NUMA node contains (C-NUMA) nodes from the same memory tier */
 struct s_numa_node_data {
+	u16 tier_id; /* Memory tier id of this S-NUMA node */
 	int nr_nodes; /* Number of numa nodes */
 	nodemask_t all_nodes; /* Node mask of all nodes */
 	int node_ids[MAX_NUMNODES];
