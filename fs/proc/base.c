@@ -92,6 +92,8 @@
 #include <linux/sched/coredump.h>
 #include <linux/sched/debug.h>
 #include <linux/sched/stat.h>
+#include <linux/sched/signal.h>
+#include <linux/numa.h>
 #include <linux/posix-timers.h>
 #include <linux/time_namespace.h>
 #include <linux/resctrl.h>
@@ -2633,6 +2635,187 @@ static const struct file_operations proc_pid_set_timerslack_ns_operations = {
 	.release	= single_release,
 };
 
+#ifdef CONFIG_RAMOS_NUMA
+static int ramos_numa_policy_parse_weights(char *str, unsigned int *weights)
+{
+	unsigned int idx = 0;
+	char *tok;
+
+	while ((tok = strsep(&str, ",")) != NULL) {
+		unsigned int val;
+		int ret;
+
+		if (!*tok)
+			return -EINVAL;
+		if (idx >= MAX_NUM_SNUMA_NODE)
+			return -E2BIG;
+
+		ret = kstrtouint(tok, 0, &val);
+		if (ret)
+			return ret;
+		weights[idx++] = val;
+	}
+
+	if (!idx)
+		return -EINVAL;
+
+	while (idx < MAX_NUM_SNUMA_NODE)
+		weights[idx++] = 0;
+
+	return 0;
+}
+
+static int ramos_numa_policy_show(struct seq_file *m, void *v)
+{
+	struct inode *inode = m->private;
+	struct task_struct *p;
+	struct signal_struct *sig;
+	unsigned int i;
+	int err = 0;
+
+	p = get_proc_task(inode);
+	if (!p)
+		return -ESRCH;
+
+	sig = READ_ONCE(p->signal);
+	if (!sig) {
+		err = -ESRCH;
+		goto out;
+	}
+
+	seq_printf(m, "enable=%u\n",
+		   READ_ONCE(sig->ramos_snode_weight_override_enable) ? 1 : 0);
+	seq_puts(m, "weights=");
+	for (i = 0; i < MAX_NUM_SNUMA_NODE; i++) {
+		seq_printf(m, "%u", READ_ONCE(sig->ramos_snode_manual_weight[i]));
+		if (i + 1 < MAX_NUM_SNUMA_NODE)
+			seq_putc(m, ',');
+	}
+	seq_putc(m, '\n');
+
+out:
+	put_task_struct(p);
+	return err;
+}
+
+static int ramos_numa_policy_open(struct inode *inode, struct file *filp)
+{
+	return single_open(filp, ramos_numa_policy_show, inode);
+}
+
+static ssize_t ramos_numa_policy_write(struct file *file, const char __user *buf,
+				       size_t count, loff_t *offset)
+{
+	struct inode *inode = file_inode(file);
+	struct task_struct *p;
+	struct signal_struct *sig;
+	char *kbuf = NULL, *iter, *tok;
+	unsigned int new_weights[MAX_NUM_SNUMA_NODE];
+	bool new_enable, enable_set = false, weights_set = false;
+	ssize_t ret = count;
+	unsigned int i;
+
+	p = get_proc_task(inode);
+	if (!p)
+		return -ESRCH;
+
+	if (p != current) {
+		rcu_read_lock();
+		if (!ns_capable(__task_cred(p)->user_ns, CAP_SYS_NICE)) {
+			rcu_read_unlock();
+			ret = -EPERM;
+			goto out_put_task;
+		}
+		rcu_read_unlock();
+
+		ret = security_task_setscheduler(p);
+		if (ret)
+			goto out_put_task;
+	}
+
+	if (count == 0 || count > PAGE_SIZE) {
+		ret = -EINVAL;
+		goto out_put_task;
+	}
+
+	kbuf = memdup_user_nul(buf, count);
+	if (IS_ERR(kbuf)) {
+		ret = PTR_ERR(kbuf);
+		kbuf = NULL;
+		goto out_put_task;
+	}
+
+	sig = READ_ONCE(p->signal);
+	if (!sig) {
+		ret = -ESRCH;
+		goto out_free_buf;
+	}
+
+	new_enable = READ_ONCE(sig->ramos_snode_weight_override_enable);
+	for (i = 0; i < MAX_NUM_SNUMA_NODE; i++)
+		new_weights[i] = READ_ONCE(sig->ramos_snode_manual_weight[i]);
+
+	iter = kbuf;
+	while ((tok = strsep(&iter, " \t\n")) != NULL) {
+		if (!*tok)
+			continue;
+
+		if (!strncmp(tok, "enable=", 7)) {
+			bool v;
+			int err = kstrtobool(tok + 7, &v);
+			if (err) {
+				ret = err;
+				goto out_free_buf;
+			}
+			new_enable = v;
+			enable_set = true;
+			continue;
+		}
+
+		if (!strncmp(tok, "weights=", 8)) {
+			int err = ramos_numa_policy_parse_weights(tok + 8,
+								  new_weights);
+			if (err) {
+				ret = err;
+				goto out_free_buf;
+			}
+			weights_set = true;
+			continue;
+		}
+
+		ret = -EINVAL;
+		goto out_free_buf;
+	}
+
+	if (!enable_set && !weights_set) {
+		ret = -EINVAL;
+		goto out_free_buf;
+	}
+
+	task_lock(p->group_leader);
+	WRITE_ONCE(sig->ramos_snode_weight_override_enable, new_enable);
+	if (weights_set) {
+		for (i = 0; i < MAX_NUM_SNUMA_NODE; i++)
+			WRITE_ONCE(sig->ramos_snode_manual_weight[i], new_weights[i]);
+	}
+	task_unlock(p->group_leader);
+
+out_free_buf:
+	kfree(kbuf);
+out_put_task:
+	put_task_struct(p);
+	return ret;
+}
+
+static const struct file_operations proc_pid_ramos_numa_policy_operations = {
+	.open		= ramos_numa_policy_open,
+	.read		= seq_read,
+	.write		= ramos_numa_policy_write,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+#endif /* CONFIG_RAMOS_NUMA */
+
 static struct dentry *proc_pident_instantiate(struct dentry *dentry,
 	struct task_struct *task, const void *ptr)
 {
@@ -3333,6 +3516,9 @@ static const struct pid_entry tgid_base_stuff[] = {
 	REG("timers",	  S_IRUGO, proc_timers_operations),
 #endif
 	REG("timerslack_ns", S_IRUGO|S_IWUGO, proc_pid_set_timerslack_ns_operations),
+#ifdef CONFIG_RAMOS_NUMA
+	REG("ramos_numa_policy", S_IRUGO|S_IWUSR, proc_pid_ramos_numa_policy_operations),
+#endif
 #ifdef CONFIG_LIVEPATCH
 	ONE("patch_state",  S_IRUSR, proc_pid_patch_state),
 #endif

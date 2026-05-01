@@ -245,6 +245,15 @@ struct signal_struct {
 						 * and may have inconsistent
 						 * permissions.
 						 */
+#ifdef CONFIG_RAMOS_NUMA
+	/*
+	 * Per-process S-NUMA policy override. When enabled, this thread group
+	 * uses its own manual S-NUMA weights instead of global/manual/adaptive
+	 * defaults.
+	 */
+	bool ramos_snode_weight_override_enable;
+	unsigned int ramos_snode_manual_weight[MAX_NUM_SNUMA_NODE];
+#endif
 } __randomize_layout;
 
 /*

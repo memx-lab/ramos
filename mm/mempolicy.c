@@ -1912,16 +1912,23 @@ static unsigned int snuma_build_effective_weights(unsigned int *weights)
 	unsigned int nr_snodes;
 	unsigned int gcd = 0;
 	unsigned int sum = 0;
+	bool task_override = false;
 	bool override = READ_ONCE(snode_weight_override_enable);
 	struct s_numa_node_data *snode_data;
+	struct signal_struct *sig = current->signal;
 	unsigned int w = 0;
+
+	if (sig)
+		task_override = READ_ONCE(sig->ramos_snode_weight_override_enable);
 
 	nr_snodes = READ_ONCE(nr_snuma_nodes);
 	for (sid = 0; sid < nr_snodes; sid++) {
 		snode_data = S_NUMA_NODE_DATA(sid);
 		w = 0;
 
-		if (override) {
+		if (task_override) {
+			w = READ_ONCE(sig->ramos_snode_manual_weight[sid]);
+		} else if (override) {
 			w = READ_ONCE(snode_manual_weight[sid]);
 		} else {
 			unsigned int bw_gbs = READ_ONCE(snode_bw_gbs[sid]);
