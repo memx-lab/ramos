@@ -2060,8 +2060,26 @@ static unsigned int snuma_pick_snode_cw_interleave(struct vm_area_struct *vma,
 static bool snuma_is_valid_snode_id(int nid)
 {
 	unsigned int nr_snodes = READ_ONCE(nr_snuma_nodes);
-
+	
 	return nid >= 0 && nid < nr_snodes;
+}
+
+/* Map a C-NUMA node id to its containing S-NUMA id. */
+static int snuma_cnode_to_snode_id(int cnode_id)
+{
+	unsigned int nr_snodes;
+	int sid;
+
+	if (cnode_id < 0 || cnode_id >= MAX_NUMNODES)
+		return -EINVAL;
+
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
+	for (sid = 0; sid < nr_snodes; sid++) {
+		if (node_isset(cnode_id, S_NUMA_NODE_DATA(sid)->all_nodes))
+			return sid;
+	}
+
+	return -ENOENT;
 }
 
 /*
@@ -2072,7 +2090,7 @@ static unsigned int snuma_pick_snode(struct mempolicy *pol,
 		struct vm_area_struct *vma, unsigned long addr, int shift)
 {
 	unsigned int nr_snodes;
-	int nid;
+	int nid, sid;
 
 	nr_snodes = READ_ONCE(nr_snuma_nodes);
 	if (!nr_snodes)
@@ -2082,19 +2100,24 @@ static unsigned int snuma_pick_snode(struct mempolicy *pol,
 	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
 		return snuma_pick_snode_cw_interleave(vma, addr, shift);
 	case MPOL_PREFERRED:
-		nid = first_node(pol->nodes);
-		if (snuma_is_valid_snode_id(nid))
-			return nid;
+		sid = first_node(pol->nodes);
+		if (snuma_is_valid_snode_id(sid))
+			return sid;
 		return snuma_first_eligible_snode();
 	case MPOL_BIND:
-		for_each_node_mask(nid, pol->nodes) {
-			if (snuma_is_valid_snode_id(nid))
-				return nid;
+		for_each_node_mask(sid, pol->nodes) {
+			if (snuma_is_valid_snode_id(sid))
+				return sid;
 		}
+		return snuma_first_eligible_snode();
+	case MPOL_LOCAL:
+		nid = numa_node_id();
+		sid = snuma_cnode_to_snode_id(nid);
+		if (snuma_is_valid_snode_id(sid))
+			return sid;
 		return snuma_first_eligible_snode();
 	case MPOL_INTERLEAVE:
 	case MPOL_PREFERRED_MANY:
-	case MPOL_LOCAL:
 	case MPOL_DEFAULT:
 	default:
 		return snuma_first_eligible_snode();
