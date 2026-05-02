@@ -2057,6 +2057,13 @@ static unsigned int snuma_pick_snode_cw_interleave(struct vm_area_struct *vma,
 	return snuma_pick_snode_weighted_round_robin();
 }
 
+static bool snuma_is_valid_snode_id(int nid)
+{
+	unsigned int nr_snodes = READ_ONCE(nr_snuma_nodes);
+
+	return nid >= 0 && nid < nr_snodes;
+}
+
 /*
  * Select target S-NUMA node under policies.
  *
@@ -2065,18 +2072,28 @@ static unsigned int snuma_pick_snode(struct mempolicy *pol,
 		struct vm_area_struct *vma, unsigned long addr, int shift)
 {
 	unsigned int nr_snodes;
+	int nid;
 
 	nr_snodes = READ_ONCE(nr_snuma_nodes);
 	if (!nr_snodes)
-		return 0;
+		return snuma_first_eligible_snode();
 
 	switch (pol->mode) {
 	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
 		return snuma_pick_snode_cw_interleave(vma, addr, shift);
+	case MPOL_PREFERRED:
+		nid = first_node(pol->nodes);
+		if (snuma_is_valid_snode_id(nid))
+			return nid;
+		return snuma_first_eligible_snode();
+	case MPOL_BIND:
+		for_each_node_mask(nid, pol->nodes) {
+			if (snuma_is_valid_snode_id(nid))
+				return nid;
+		}
+		return snuma_first_eligible_snode();
 	case MPOL_INTERLEAVE:
 	case MPOL_PREFERRED_MANY:
-	case MPOL_PREFERRED:
-	case MPOL_BIND:
 	case MPOL_LOCAL:
 	case MPOL_DEFAULT:
 	default:
@@ -2173,6 +2190,30 @@ static unsigned int snuma_interleave_nid(int snode_id,
 		return snuma_offset_il_node(snode_id, off);
 	} else
 		return snuma_interleave_nodes(snode_id);
+}
+
+static nodemask_t *snuma_get_policy_cnode_mask(struct mempolicy *pol,
+					       nodemask_t *cnodes_mask)
+{
+	struct s_numa_node_data *snode_data;
+	int sid;
+
+	if (pol->mode == MPOL_BIND) {
+		nodes_clear(*cnodes_mask);
+		for_each_node_mask(sid, pol->nodes) {
+			if (!snuma_is_valid_snode_id(sid))
+				continue;
+			snode_data = S_NUMA_NODE_DATA(sid);
+			nodes_or(*cnodes_mask, *cnodes_mask, snode_data->all_nodes);
+		}
+
+		if (nodes_empty(*cnodes_mask))
+			return NULL;
+
+		return cnodes_mask;
+	}
+
+	return NULL;
 }
 
 #ifdef CONFIG_SYSFS
@@ -2697,11 +2738,11 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 		unsigned long addr, bool hugepage)
 {
 	struct mempolicy *pol;
-	int node = numa_node_id();
 	struct folio *folio;
 	int preferred_nid;
 #ifdef CONFIG_RAMOS_NUMA
 	int snode_id;
+	nodemask_t cnodes_mask;
 #endif
 	nodemask_t *nmask;
 
@@ -2712,12 +2753,8 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 	snode_id = snuma_pick_snode(pol, vma, addr, PAGE_SHIFT + order);
 	/* 2. Select a C-NUMA node. This always interleaves C-NUMA nodes to maximize bandwidth */
 	preferred_nid = snuma_interleave_nid(snode_id, vma, addr, PAGE_SHIFT + order);
-	nmask = NULL;
-	if (preferred_nid < 0) {
-            printk_ramos_debug("Cannot find preferred id for node %d, use default policy.\n", node);
-            nmask = policy_nodemask(gfp, pol);
-            preferred_nid = policy_node(gfp, pol, node);
-    }
+	/* 3. Get allowed C-NUMA node mask for fallback. */
+	nmask = snuma_get_policy_cnode_mask(pol, &cnodes_mask);
 	folio = __folio_alloc(gfp, order, preferred_nid, nmask);
 	mpol_cond_put(pol);
 
