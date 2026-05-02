@@ -1917,7 +1917,8 @@ static unsigned int snode_bw_gbs[MAX_NUM_SNUMA_NODE] = {
 static unsigned int snode_manual_weight[MAX_NUM_SNUMA_NODE] = {
 	[0 ... MAX_NUM_SNUMA_NODE - 1] = 1,
 };
-static bool snode_weight_override_enable;
+static bool snode_weight_override_enable = false;
+static bool cw_bandwidth_enable = true;
 
 static unsigned int snuma_weight_gcd(unsigned int a, unsigned int b)
 {
@@ -2035,32 +2036,10 @@ static unsigned int snuma_pick_snode_weighted_by_offset(unsigned long offset)
 	return snuma_pick_snode_weighted_slot(weights, slot);
 }
 
-/*
- * Channel-weighted interleaving:
- * 1) Adaptive mode:
- *    weight = snode_bw_gbs * nr_channels
- * 2) Manual override mode:
- *    weight = snode_manual_weight
- */
-static unsigned int snuma_pick_snode_cw_interleave(struct vm_area_struct *vma,
-		unsigned long addr, int shift)
-{
-	if (vma) {
-		unsigned long off;
-
-		BUG_ON(shift < PAGE_SHIFT);
-		off = vma->vm_pgoff >> (shift - PAGE_SHIFT);
-		off += (addr - vma->vm_start) >> shift;
-		return snuma_pick_snode_weighted_by_offset(off);
-	}
-
-	return snuma_pick_snode_weighted_round_robin();
-}
-
 static bool snuma_is_valid_snode_id(int nid)
 {
 	unsigned int nr_snodes = READ_ONCE(nr_snuma_nodes);
-	
+
 	return nid >= 0 && nid < nr_snodes;
 }
 
@@ -2083,8 +2062,32 @@ static int snuma_cnode_to_snode_id(int cnode_id)
 }
 
 /*
+ * Channel-weighted interleaving:
+ * 1) Adaptive mode:
+ *    weight = snode_bw_gbs * nr_channels
+ * 2) Manual override mode:
+ *    weight = snode_manual_weight
+ */
+static unsigned int snuma_pick_snode_cw_interleave(struct vm_area_struct *vma,
+		unsigned long addr, int shift)
+{
+	if (vma) {
+		unsigned long off;
+
+		BUG_ON(shift < PAGE_SHIFT);
+		off = vma->vm_pgoff >> (shift - PAGE_SHIFT);
+		off += (addr - vma->vm_start) >> shift;
+		return snuma_pick_snode_weighted_by_offset(off);
+	}
+
+	return snuma_pick_snode_weighted_round_robin();
+}
+
+/*
  * Select target S-NUMA node under policies.
  *
+ * This aims to preserve original NUMA policy semantics while
+ * adapting node selection to the S-NUMA/C-NUMA abstraction.
  */
 static unsigned int snuma_pick_snode(struct mempolicy *pol,
 		struct vm_area_struct *vma, unsigned long addr, int shift)
@@ -2098,7 +2101,15 @@ static unsigned int snuma_pick_snode(struct mempolicy *pol,
 
 	switch (pol->mode) {
 	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
-		return snuma_pick_snode_cw_interleave(vma, addr, shift);
+		if (READ_ONCE(cw_bandwidth_enable)) {
+			return snuma_pick_snode_cw_interleave(vma, addr, shift);
+		} else {
+			/* for capacity extension, we prioritize local S-NUMA node */
+			sid = snuma_cnode_to_snode_id(numa_node_id());
+			if (!snuma_is_valid_snode_id(sid))
+				sid = snuma_first_eligible_snode();
+			return sid;
+		}
 	case MPOL_PREFERRED:
 		sid = first_node(pol->nodes);
 		if (snuma_is_valid_snode_id(sid))
@@ -2283,6 +2294,27 @@ static ssize_t weight_override_enable_store(struct kobject *kobj,
 	return count;
 }
 
+static ssize_t cw_bandwidth_enable_show(struct kobject *kobj,
+					struct kobj_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%u\n", READ_ONCE(cw_bandwidth_enable) ? 1 : 0);
+}
+
+static ssize_t cw_bandwidth_enable_store(struct kobject *kobj,
+					 struct kobj_attribute *attr,
+					 const char *buf, size_t count)
+{
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	WRITE_ONCE(cw_bandwidth_enable, enable);
+	return count;
+}
+
 static ssize_t weights_summary_show(struct kobject *kobj,
 				    struct kobj_attribute *attr, char *buf)
 {
@@ -2318,6 +2350,9 @@ static ssize_t weights_summary_show(struct kobject *kobj,
 static struct kobj_attribute weight_override_enable_attr =
 	__ATTR(weight_override_enable, 0644,
 	       weight_override_enable_show, weight_override_enable_store);
+static struct kobj_attribute cw_bandwidth_enable_attr =
+	__ATTR(cw_bandwidth_enable, 0644,
+	       cw_bandwidth_enable_show, cw_bandwidth_enable_store);
 static struct kobj_attribute weights_summary_attr =
 	__ATTR_RO(weights_summary);
 
@@ -2380,6 +2415,7 @@ static struct kobj_attribute snode_weight_attr =
 
 static struct attribute *ramos_numa_attrs[] = {
 	&weight_override_enable_attr.attr,
+	&cw_bandwidth_enable_attr.attr,
 	&weights_summary_attr.attr,
 	NULL,
 };
@@ -3201,7 +3237,12 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 #ifdef CONFIG_RAMOS_NUMA
 	pgoff = vma->vm_pgoff;
 	pgoff += (addr - vma->vm_start) >> PAGE_SHIFT;
-	snode_id = snuma_pick_snode_cw_interleave(vma, addr, PAGE_SHIFT);
+	/*
+	 * Reuse the same S-NUMA selection policy as allocation path.
+	 * In capacity mode, MPOL_CHANNEL_WEIGHTED_INTERLEAVE falls back
+	 * to local S-NUMA selection.
+	 */
+	snode_id = snuma_pick_snode(pol, vma, addr, PAGE_SHIFT);
 	polnid = snuma_offset_il_node(snode_id, pgoff);
 #else
 	switch (pol->mode) {
