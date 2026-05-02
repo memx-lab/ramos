@@ -1408,6 +1408,8 @@ struct s_numa_node_data {
 	nodemask_t all_nodes; /* Node mask of all nodes */
 	int node_ids[MAX_NUMNODES];
 };
+
+int snuma_cnode_to_snode_id(int cnode_id);
 #endif /* CONFIG_RAMOS_NUMA */
 
 #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)

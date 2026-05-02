@@ -744,6 +744,21 @@ void trigger_numa_rescan(void)
 			atomic_read(&numa_rescan_global_flag));
 }
 
+int snuma_cnode_to_snode_id(int cnode_id)
+{
+	unsigned int sid;
+
+	if (cnode_id < 0 || cnode_id >= MAX_NUMNODES)
+		return -EINVAL;
+
+	for (sid = 0; sid < nr_snuma_nodes; sid++) {
+		if (node_isset(cnode_id, s_numa_nodes[sid].all_nodes))
+			return sid;
+	}
+
+	return -ENOENT;
+}
+
 int numa_add_to_snode(int nodeid, u16 tier_id)
 {
 	int i, snode_id = -1;

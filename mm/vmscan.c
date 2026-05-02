@@ -1569,10 +1569,30 @@ static struct page *alloc_demote_page(struct page *page, unsigned long private)
 	struct page *target_page;
 	nodemask_t *allowed_mask;
 	struct migration_target_control *mtc;
+#ifdef CONFIG_RAMOS_NUMA
+	int nnodes, target, i, nid;
+#endif
 
 	mtc = (struct migration_target_control *)private;
 
 	allowed_mask = mtc->nmask;
+#ifdef CONFIG_RAMOS_NUMA
+	/*
+	 * Keep C-NUMA placement distributed inside destination S-NUMA by
+	 * hashing page PFN over the allowed target mask.
+	 */
+	if (allowed_mask) {
+		nnodes = nodes_weight(*allowed_mask);
+		if (nnodes > 0) {
+			target = (int)(page_to_pfn(page) % nnodes);
+			nid = first_node(*allowed_mask);
+			for (i = 0; i < target; i++)
+				nid = next_node(nid, *allowed_mask);
+			if (nid < MAX_NUMNODES)
+				mtc->nid = nid;
+		}
+	}
+#endif
 	/*
 	 * make sure we allocate from the target node first also trying to
 	 * demote or reclaim pages from the target node via kswapd if we are
@@ -1594,6 +1614,48 @@ static struct page *alloc_demote_page(struct page *page, unsigned long private)
 	return alloc_migration_target(page, (unsigned long)mtc);
 }
 
+#ifdef CONFIG_RAMOS_NUMA
+static int snuma_pick_demotion_snode(int src_nid)
+{
+	unsigned int sid, nr_snodes;
+	int src_sid;
+	u16 src_tier, best_tier = U16_MAX;
+	int best_sid = -1;
+
+	src_sid = snuma_cnode_to_snode_id(src_nid);
+	if (src_sid < 0)
+		return -ENOENT;
+
+	src_tier = S_NUMA_NODE_DATA(src_sid)->tier_id;
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
+
+	/* Prefer the nearest slower tier (larger tier id). */
+	for (sid = 0; sid < nr_snodes; sid++) {
+		struct s_numa_node_data *snode = S_NUMA_NODE_DATA(sid);
+
+		if (sid == src_sid || snode->nr_nodes <= 0)
+			continue;
+		if (snode->tier_id > src_tier && snode->tier_id < best_tier) {
+			best_tier = snode->tier_id;
+			best_sid = sid;
+		}
+	}
+
+	if (best_sid >= 0)
+		return best_sid;
+
+	/* Fallback: any other non-empty S-NUMA node. */
+	for (sid = 0; sid < nr_snodes; sid++) {
+		struct s_numa_node_data *snode = S_NUMA_NODE_DATA(sid);
+
+		if (sid != src_sid && snode->nr_nodes > 0)
+			return sid;
+	}
+
+	return -ENOENT;
+}
+#endif
+
 /*
  * Take folios on @demote_folios and attempt to demote them to another node.
  * Folios which are not demoted are left on @demote_folios.
@@ -1601,6 +1663,11 @@ static struct page *alloc_demote_page(struct page *page, unsigned long private)
 static unsigned int demote_folio_list(struct list_head *demote_folios,
 				     struct pglist_data *pgdat)
 {
+#ifdef CONFIG_RAMOS_NUMA
+	nodemask_t target_mask;
+	struct s_numa_node_data *target_snode;
+	int target_sid;
+#endif
 	int target_nid = next_demotion_node(pgdat->node_id);
 	unsigned int nr_succeeded;
 	nodemask_t allowed_mask;
@@ -1620,10 +1687,24 @@ static unsigned int demote_folio_list(struct list_head *demote_folios,
 	if (list_empty(demote_folios))
 		return 0;
 
+#ifdef CONFIG_RAMOS_NUMA
+	target_sid = snuma_pick_demotion_snode(pgdat->node_id);
+	if (target_sid >= 0) {
+		target_snode = S_NUMA_NODE_DATA(target_sid);
+		target_mask = target_snode->all_nodes;
+		if (!nodes_empty(target_mask)) {
+			mtc.nid = target_snode->node_ids[0];
+			mtc.nmask = &target_mask;
+		}
+	} else if (target_nid == NUMA_NO_NODE) {
+		return 0;
+	}
+#else
 	if (target_nid == NUMA_NO_NODE)
 		return 0;
 
 	node_get_allowed_targets(pgdat, &allowed_mask);
+#endif
 
 	/* Demotion ignores all cpuset and mempolicy settings */
 	migrate_pages(demote_folios, alloc_demote_page, NULL,

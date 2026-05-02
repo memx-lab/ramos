@@ -2043,24 +2043,6 @@ static bool snuma_is_valid_snode_id(int nid)
 	return nid >= 0 && nid < nr_snodes;
 }
 
-/* Map a C-NUMA node id to its containing S-NUMA id. */
-static int snuma_cnode_to_snode_id(int cnode_id)
-{
-	unsigned int nr_snodes;
-	int sid;
-
-	if (cnode_id < 0 || cnode_id >= MAX_NUMNODES)
-		return -EINVAL;
-
-	nr_snodes = READ_ONCE(nr_snuma_nodes);
-	for (sid = 0; sid < nr_snodes; sid++) {
-		if (node_isset(cnode_id, S_NUMA_NODE_DATA(sid)->all_nodes))
-			return sid;
-	}
-
-	return -ENOENT;
-}
-
 /*
  * Channel-weighted interleaving:
  * 1) Adaptive mode:
