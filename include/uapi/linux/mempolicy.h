@@ -23,6 +23,9 @@ enum {
 	MPOL_INTERLEAVE,
 	MPOL_LOCAL,
 	MPOL_PREFERRED_MANY,
+#ifdef CONFIG_RAMOS_NUMA
+	MPOL_CHANNEL_WEIGHTED_INTERLEAVE,
+#endif
 	MPOL_MAX,	/* always last member of enum */
 };
 

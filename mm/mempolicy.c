@@ -130,6 +130,17 @@ static struct mempolicy default_policy = {
 	.mode = MPOL_LOCAL,
 };
 
+#ifdef CONFIG_RAMOS_NUMA
+/*
+ * RAMOS default policy for user tasks when task->mempolicy is unset.
+ * S-NUMA/C-NUMA selection is resolved in RAMOS policy paths.
+ */
+static struct mempolicy ramos_user_default_policy = {
+	.refcnt = ATOMIC_INIT(1), /* never free it */
+	.mode = MPOL_CHANNEL_WEIGHTED_INTERLEAVE,
+};
+#endif
+
 static struct mempolicy preferred_node_policy[MAX_NUMNODES];
 
 /**
@@ -167,6 +178,15 @@ struct mempolicy *get_task_policy(struct task_struct *p)
 
 	if (pol)
 		return pol;
+
+#ifdef CONFIG_RAMOS_NUMA
+	/*
+	 * Keep kernel allocations on the original default policy.
+	 * User tasks default to RAMOS channel-weighted interleave.
+	 */
+	if (!(p->flags & PF_KTHREAD))
+		return &ramos_user_default_policy;
+#endif
 
 	node = numa_node_id();
 	if (node != NUMA_NO_NODE) {
@@ -399,6 +419,13 @@ static const struct mempolicy_operations mpol_ops[MPOL_MAX] = {
 		.create = mpol_new_nodemask,
 		.rebind = mpol_rebind_nodemask,
 	},
+#ifdef CONFIG_RAMOS_NUMA
+	/* Currenly, the policy ignores nodemask and consider all S-NUMA nodes */
+	[MPOL_CHANNEL_WEIGHTED_INTERLEAVE] = {
+		.create = mpol_new_nodemask,
+		.rebind = mpol_rebind_nodemask,
+	},
+#endif
 	[MPOL_PREFERRED] = {
 		.create = mpol_new_preferred,
 		.rebind = mpol_rebind_preferred,
@@ -889,6 +916,9 @@ static void get_policy_nodemask(struct mempolicy *p, nodemask_t *nodes)
 	switch (p->mode) {
 	case MPOL_BIND:
 	case MPOL_INTERLEAVE:
+#ifdef CONFIG_RAMOS_NUMA
+	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
+#endif
 	case MPOL_PREFERRED:
 	case MPOL_PREFERRED_MANY:
 		*nodes = p->nodes;
@@ -2012,7 +2042,7 @@ static unsigned int snuma_pick_snode_weighted_by_offset(unsigned long offset)
  * 2) Manual override mode:
  *    weight = snode_manual_weight
  */
-static unsigned int snuma_pick_snode(struct vm_area_struct *vma,
+static unsigned int snuma_pick_snode_cw_interleave(struct vm_area_struct *vma,
 		unsigned long addr, int shift)
 {
 	if (vma) {
@@ -2025,6 +2055,33 @@ static unsigned int snuma_pick_snode(struct vm_area_struct *vma,
 	}
 
 	return snuma_pick_snode_weighted_round_robin();
+}
+
+/*
+ * Select target S-NUMA node under policies.
+ *
+ */
+static unsigned int snuma_pick_snode(struct mempolicy *pol,
+		struct vm_area_struct *vma, unsigned long addr, int shift)
+{
+	unsigned int nr_snodes;
+
+	nr_snodes = READ_ONCE(nr_snuma_nodes);
+	if (!nr_snodes)
+		return 0;
+
+	switch (pol->mode) {
+	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
+		return snuma_pick_snode_cw_interleave(vma, addr, shift);
+	case MPOL_INTERLEAVE:
+	case MPOL_PREFERRED_MANY:
+	case MPOL_PREFERRED:
+	case MPOL_BIND:
+	case MPOL_LOCAL:
+	case MPOL_DEFAULT:
+	default:
+		return snuma_first_eligible_snode();
+	}
 }
 
 /* Static interleaving for a VMA with know offset */
@@ -2402,6 +2459,9 @@ unsigned int mempolicy_slab_node(void)
 							&policy->nodes);
 		return z->zone ? zone_to_nid(z->zone) : node;
 	}
+#ifdef CONFIG_RAMOS_NUMA
+	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
+#endif
 	case MPOL_LOCAL:
 		return node;
 
@@ -2488,6 +2548,8 @@ int huge_node(struct vm_area_struct *vma, unsigned long addr, gfp_t gfp_flags,
 	*nodemask = NULL;
 	mode = (*mpol)->mode;
 
+	// TODO: CONFIG_RAMOS_NUMA
+	// add case MPOL_CHANNEL_WEIGHTED_INTERLEAVE for hugepages
 	if (unlikely(mode == MPOL_INTERLEAVE)) {
 		nid = interleave_nid(*mpol, vma, addr,
 					huge_page_shift(hstate_vma(vma)));
@@ -2529,6 +2591,9 @@ bool init_nodemask_of_mempolicy(nodemask_t *mask)
 	case MPOL_PREFERRED_MANY:
 	case MPOL_BIND:
 	case MPOL_INTERLEAVE:
+#ifdef CONFIG_RAMOS_NUMA
+	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
+#endif
 		*mask = mempolicy->nodes;
 		break;
 
@@ -2642,6 +2707,22 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 
 	pol = get_vma_policy(vma, addr);
 
+#ifdef CONFIG_RAMOS_NUMA
+	/* 1. Select a S-NUMA node. This follows original NUMA policies. */
+	snode_id = snuma_pick_snode(pol, vma, addr, PAGE_SHIFT + order);
+	/* 2. Select a C-NUMA node. This always interleaves C-NUMA nodes to maximize bandwidth */
+	preferred_nid = snuma_interleave_nid(snode_id, vma, addr, PAGE_SHIFT + order);
+	nmask = NULL;
+	if (preferred_nid < 0) {
+            printk_ramos_debug("Cannot find preferred id for node %d, use default policy.\n", node);
+            nmask = policy_nodemask(gfp, pol);
+            preferred_nid = policy_node(gfp, pol, node);
+    }
+	folio = __folio_alloc(gfp, order, preferred_nid, nmask);
+	mpol_cond_put(pol);
+
+	return folio;
+#else
 	if (pol->mode == MPOL_INTERLEAVE) {
 		struct page *page;
 		unsigned nid;
@@ -2709,26 +2790,14 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 		}
 	}
 
-#ifdef CONFIG_RAMOS_NUMA
-	snode_id = snuma_pick_snode(vma, addr, PAGE_SHIFT + order);
-	preferred_nid = snuma_interleave_nid(snode_id, vma, addr, PAGE_SHIFT + order);
-	nmask = NULL;
-	if (preferred_nid < 0) {
-            printk_ramos_debug("Cannot find preferred id for node %d, use default policy.\n", node);
-            nmask = policy_nodemask(gfp, pol);
-            preferred_nid = policy_node(gfp, pol, node);
-    }
-	folio = __folio_alloc(gfp, order, preferred_nid, nmask);
-	mpol_cond_put(pol);
-#else
 	nmask = policy_nodemask(gfp, pol);
 	preferred_nid = policy_node(gfp, pol, node);
 	folio = __folio_alloc(gfp, order, preferred_nid, nmask);
 	mpol_cond_put(pol);
-#endif
 
 out:
 	return folio;
+#endif
 }
 EXPORT_SYMBOL(vma_alloc_folio);
 
@@ -2927,6 +2996,9 @@ bool __mpol_equal(struct mempolicy *a, struct mempolicy *b)
 	switch (a->mode) {
 	case MPOL_BIND:
 	case MPOL_INTERLEAVE:
+#ifdef CONFIG_RAMOS_NUMA
+	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
+#endif
 	case MPOL_PREFERRED:
 	case MPOL_PREFERRED_MANY:
 		return !!nodes_equal(a->nodes, b->nodes);
@@ -3069,7 +3141,7 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 #ifdef CONFIG_RAMOS_NUMA
 	pgoff = vma->vm_pgoff;
 	pgoff += (addr - vma->vm_start) >> PAGE_SHIFT;
-	snode_id = snuma_pick_snode(vma, addr, PAGE_SHIFT);
+	snode_id = snuma_pick_snode_cw_interleave(vma, addr, PAGE_SHIFT);
 	polnid = snuma_offset_il_node(snode_id, pgoff);
 #else
 	switch (pol->mode) {
@@ -3464,6 +3536,9 @@ static const char * const policy_modes[] =
 	[MPOL_PREFERRED]  = "prefer",
 	[MPOL_BIND]       = "bind",
 	[MPOL_INTERLEAVE] = "interleave",
+#ifdef CONFIG_RAMOS_NUMA
+	[MPOL_CHANNEL_WEIGHTED_INTERLEAVE] = "channel_weighted_interleaving",
+#endif
 	[MPOL_LOCAL]      = "local",
 	[MPOL_PREFERRED_MANY]  = "prefer (many)",
 };
@@ -3524,6 +3599,9 @@ int mpol_parse_str(char *str, struct mempolicy **mpol)
 		}
 		break;
 	case MPOL_INTERLEAVE:
+#ifdef CONFIG_RAMOS_NUMA
+	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
+#endif
 		/*
 		 * Default to online nodes with memory if no nodelist
 		 */
@@ -3634,6 +3712,9 @@ void mpol_to_str(char *buffer, int maxlen, struct mempolicy *pol)
 	case MPOL_PREFERRED_MANY:
 	case MPOL_BIND:
 	case MPOL_INTERLEAVE:
+#ifdef CONFIG_RAMOS_NUMA
+	case MPOL_CHANNEL_WEIGHTED_INTERLEAVE:
+#endif
 		nodes = pol->nodes;
 		break;
 	default:
