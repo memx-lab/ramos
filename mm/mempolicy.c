@@ -1943,6 +1943,8 @@ static unsigned int snuma_build_effective_weights(unsigned int *weights)
 	unsigned int nr_snodes;
 	unsigned int gcd = 0;
 	unsigned int sum = 0;
+	unsigned int channel_sum = 0;
+	unsigned int scale;
 	bool override = READ_ONCE(snode_weight_override_enable);
 	struct s_numa_node_data *snode_data;
 	unsigned int w = 0;
@@ -1964,6 +1966,7 @@ static unsigned int snuma_build_effective_weights(unsigned int *weights)
 		if (w) {
 			gcd = gcd ? snuma_weight_gcd(gcd, w) : w;
 			sum += w;
+			channel_sum += snode_data->nr_nodes;
 		}
 	}
 
@@ -1974,6 +1977,20 @@ static unsigned int snuma_build_effective_weights(unsigned int *weights)
 		sum = 0;
 		for (sid = 0; sid < nr_snodes; sid++) {
 			weights[sid] /= gcd;
+			sum += weights[sid];
+		}
+	}
+
+	/*
+	 * Keep enough slots after normalization so round-robin granularity
+	 * is not coarser than total channel count across active S-NUMA nodes.
+	 * Example: 4:2 -> gcd normalize 2:1 (sum=3), then scale back to 4:2.
+	 */
+	if (sum && channel_sum && sum < channel_sum) {
+		scale = DIV_ROUND_UP(channel_sum, sum);
+		sum = 0;
+		for (sid = 0; sid < nr_snodes; sid++) {
+			weights[sid] *= scale;
 			sum += weights[sid];
 		}
 	}
