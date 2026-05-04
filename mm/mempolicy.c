@@ -138,6 +138,7 @@ static struct mempolicy default_policy = {
 static struct mempolicy ramos_user_default_policy = {
 	.refcnt = ATOMIC_INIT(1), /* never free it */
 	.mode = MPOL_CHANNEL_WEIGHTED_INTERLEAVE,
+	.flags = MPOL_F_MOF,
 };
 #endif
 
@@ -322,6 +323,14 @@ static struct mempolicy *mpol_new(unsigned short mode, unsigned short flags,
 	policy->mode = mode;
 	policy->flags = flags;
 	policy->home_node = NUMA_NO_NODE;
+#ifdef CONFIG_RAMOS_NUMA
+	/*
+	 * Keep NUMA balancing migration path active for the RAMOS channel
+	 * weighted policy, so mpol_misplaced() participates in periodic scans.
+	 */
+	if (mode == MPOL_CHANNEL_WEIGHTED_INTERLEAVE)
+		policy->flags |= MPOL_F_MOF;
+#endif
 
 	return policy;
 }
@@ -3226,7 +3235,6 @@ int mpol_misplaced(struct page *page, struct vm_area_struct *vma, unsigned long 
 	int thisnid = cpu_to_node(thiscpu);
 #else
 	int snode_id;
-	//struct task_struct *p = current;
 #endif
 
 	pol = get_vma_policy(vma, addr);
@@ -3304,7 +3312,8 @@ out:
 	mpol_cond_put(pol);
 
 	//printk_ramos_debug("pid %d, offset %ld, current id %d policy id: %d, ret %d\n",
-	//	p->tgid, pgoff, curnid, polnid, ret);
+	//	current->tgid, pgoff, curnid, polnid, ret);
+
 	return ret;
 }
 
