@@ -2945,7 +2945,6 @@ static void task_numa_work(struct callback_head *work)
 	unsigned long nr_pte_updates = 0;
 	long pages, virtpages;
 	struct vma_iterator vmi;
-	unsigned char global_flag = atomic_read(&numa_rescan_global_flag) & NUMA_RESCAN_MASK;
 
 	SCHED_WARN_ON(p != container_of(work, struct task_struct, numa_work));
 
@@ -2966,28 +2965,6 @@ static void task_numa_work(struct callback_head *work)
 			msecs_to_jiffies(sysctl_numa_balancing_scan_delay);
 	}
 
-#ifdef CONFIG_RAMOS_NUMA
-	if (global_flag != mm->numa_local_rescan_flag) {
-		mm->numa_local_rescan_flag = global_flag;
-
-		next_scan = now + msecs_to_jiffies(sysctl_numa_balancing_scan_delay);
-		WRITE_ONCE(mm->numa_next_scan, next_scan);
-	} else {
-		/* Enforce maximal scan/migration frequency. */
-		migrate = mm->numa_next_scan;
-		if (time_before(now, migrate))
-			return;
-
-		if (p->numa_scan_period == 0) {
-			p->numa_scan_period_max = task_scan_max(p);
-			p->numa_scan_period = task_scan_start(p);
-		}
-
-		next_scan = now + msecs_to_jiffies(p->numa_scan_period);
-		if (!try_cmpxchg(&mm->numa_next_scan, &migrate, next_scan))
-			return;
-	}
-#else
 	/*
 	 * Enforce maximal scan/migration frequency..
 	 */
@@ -3003,7 +2980,6 @@ static void task_numa_work(struct callback_head *work)
 	next_scan = now + msecs_to_jiffies(p->numa_scan_period);
 	if (!try_cmpxchg(&mm->numa_next_scan, &migrate, next_scan))
 		return;
-#endif
 
 	/*
 	 * Delay this task enough that another task of this mm will likely win

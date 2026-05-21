@@ -36,13 +36,9 @@ EXPORT_SYMBOL(s_numa_nodes);
 unsigned int nr_snuma_nodes __read_mostly;
 EXPORT_SYMBOL(nr_snuma_nodes);
 
-/* Used to trigger page re-distribution for hot-plug NUMA node */
-atomic_t numa_rescan_global_flag = ATOMIC_INIT(0);
-
 /*
  * We use this to record NUMA node physical information.
- * When hotplug new memory and thus new numa node, we use this information
- * to construct new virtual node.
+ * When hotplug new memory channels, we use this information to construct new NUMA nodes.
  */
 struct numa_phys_info numa_phys_info[MAX_NUMNODES] __read_mostly;
 #endif /* CONFIG_RAMOS_NUMA */
@@ -737,13 +733,6 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 }
 
 #ifdef CONFIG_RAMOS_NUMA
-void trigger_numa_rescan(void)
-{
-	atomic_xor(1, &numa_rescan_global_flag);
-	printk_ramos_info("Global NUMA rescan flag toggled: %d\n",
-			atomic_read(&numa_rescan_global_flag));
-}
-
 int snuma_cnode_to_snode_id(int cnode_id)
 {
 	unsigned int sid;
